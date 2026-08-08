@@ -1,0 +1,141 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "{k8s_cluster=\"kuber-prod\", k8s_namespace_name=\"$namespace\", k8s_app=\"$k8s_app\"} |= \"$find\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs",
+      "type": "logs"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["loki", "mystrio"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "bpf-msa",
+          "value": "bpf-msa"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "k8s_namespace",
+        "multi": false,
+        "name": "namespace",
+        "options": [
+          {
+            "selected": true,
+            "text": "bpf-msa",
+            "value": "bpf-msa"
+          },
+          {
+            "selected": false,
+            "text": "bpf-ob",
+            "value": "bpf-ob"
+          },
+          {
+            "selected": false,
+            "text": "bos",
+            "value": "bos"
+          },
+          {
+            "selected": false,
+            "text": "onbank",
+            "value": "onbank"
+          }
+        ],
+        "query": "bpf-msa,bpf-ob,bos,onbank",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "allValue": null,
+        "current": {},
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "definition": "label_values({k8s_namespace_name=~\"$namespace\"}, k8s_app)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "k8s_app",
+        "name": "k8s_app",
+        "options": [],
+        "query": "label_values({k8s_namespace_name=~\"$namespace\"}, k8s_app)",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "hide": 0,
+        "label": "find",
+        "name": "find",
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Mystrio Logs",
+  "uid": "mystrio-logs",
+  "version": 2
+}

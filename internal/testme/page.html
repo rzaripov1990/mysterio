@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mystrio — masking test</title>
+<link rel="stylesheet" href="{{.BasePath}}/test-me/vendor/codemirror.min.css">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --border: #d0d0d0;
+    --editor-bg: #f7f7f7;
+    --accent: #2563eb;
+    --tok-key: #7c3aed;
+    --tok-str: #059669;
+    --tok-comment: #6b7280;
+    --tok-list: #b45309;
+    --error: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --fg: #e5e5e5;
+      --border: #3a3a3a;
+      --editor-bg: #111111;
+      --accent: #60a5fa;
+      --tok-key: #c4b5fd;
+      --tok-str: #6ee7b7;
+      --tok-comment: #9ca3af;
+      --tok-list: #fbbf24;
+      --error: #fca5a5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .note { color: var(--tok-comment); font-size: 13px; margin: 0 0 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .CodeMirror {
+    height: 340px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  @media (prefers-color-scheme: dark) {
+    .CodeMirror { background: var(--editor-bg); color: var(--fg); }
+    .CodeMirror-gutters { background: var(--editor-bg); border-color: var(--border); }
+    .CodeMirror-linenumber { color: var(--tok-comment); }
+    .CodeMirror-cursor { border-left-color: var(--fg); }
+    .CodeMirror .cm-comment { color: var(--tok-comment); }
+    .CodeMirror .cm-string, .CodeMirror .cm-string-2 { color: var(--tok-str); }
+    .CodeMirror .cm-def, .CodeMirror .cm-variable-2, .CodeMirror .cm-keyword { color: var(--tok-key); }
+    .CodeMirror .cm-atom, .CodeMirror .cm-number { color: var(--tok-list); }
+    .CodeMirror .cm-meta { color: var(--tok-comment); }
+  }
+  textarea.plain {
+    width: 100%;
+    height: 340px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--editor-bg);
+    color: var(--fg);
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  button {
+    margin-top: 16px;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  pre.result {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--editor-bg);
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 80px;
+  }
+  pre.result.error { color: var(--error); border-color: var(--error); }
+</style>
+</head>
+<body>
+  <h1>mystrio — masking test</h1>
+  <p class="note">Rules edited here are not applied to the running service — this only previews masking against the log below.</p>
+
+  <div class="grid">
+    <div>
+      <label for="rules">rules.yaml (editable, check regexp on <a href="https://qodex.ai/all-tools/go-regex-tester">site</a>)</label>
+      <textarea id="rules"></textarea>
+    </div>
+    <div>
+      <label for="log">Log line (paste from Grafana)</label>
+      <textarea id="log" class="plain mono" spellcheck="false" placeholder='{"level":"DEBUG","message":"...","secret":"qwerty123"}'></textarea>
+    </div>
+  </div>
+
+  <button id="maskBtn">Mask</button>
+
+  <label style="margin-top:20px;">Result</label>
+  <pre id="result" class="result mono"></pre>
+
+<script src="{{.BasePath}}/test-me/vendor/codemirror.min.js"></script>
+<script src="{{.BasePath}}/test-me/vendor/yaml.min.js"></script>
+<script>
+(function () {
+  var BASE = "{{.BasePath}}";
+
+  var cm = CodeMirror.fromTextArea(document.getElementById('rules'), {
+    mode: 'yaml',
+    lineNumbers: true,
+    tabSize: 2,
+    viewportMargin: Infinity
+  });
+
+  fetch(BASE + '/test-me/api/rules')
+    .then(function (r) { return r.text(); })
+    .then(function (text) { cm.setValue(text); })
+    .catch(function () { /* leave editor empty on fetch failure */ });
+
+  var logEl = document.getElementById('log');
+  var resultEl = document.getElementById('result');
+  var btn = document.getElementById('maskBtn');
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    resultEl.classList.remove('error');
+    resultEl.textContent = 'Masking...';
+
+    fetch(BASE + '/test-me/api/mask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rules: cm.getValue(), log: logEl.value })
+    })
+      .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+      .then(function (res) {
+        if (res.status !== 200 || res.data.error) {
+          resultEl.classList.add('error');
+          resultEl.textContent = res.data.error || ('HTTP ' + res.status);
+        } else {
+          resultEl.classList.remove('error');
+          resultEl.textContent = res.data.result;
+        }
+      })
+      .catch(function (err) {
+        resultEl.classList.add('error');
+        resultEl.textContent = 'Request failed: ' + err;
+      })
+      .finally(function () {
+        btn.disabled = false;
+      });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+examples/
+.claude/
+docs/superpowers/
+*.sh

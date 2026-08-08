@@ -1,0 +1,9 @@
+json_keys:
+  - name: iin
+    keys: [iin, biin]
+    replace: "************"
+
+regex:
+  - name: email
+    pattern: '[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
+    replace: "***@***"

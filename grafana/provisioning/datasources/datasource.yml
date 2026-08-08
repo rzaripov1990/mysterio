@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    uid: loki
+    # Same docker network — do NOT use localhost/0.0.0.0 from Grafana container
+    url: http://mystrio:8080/loki
+    isDefault: true
+    editable: true
+    basicAuth: true
+    basicAuthUser: $LOKI_USER
+    jsonData:
+      maxLines: 1000
+      timeout: 60
+      tlsSkipVerify: true
+    secureJsonData:
+      basicAuthPassword: $LOKI_PASS

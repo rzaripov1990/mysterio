@@ -1,0 +1,120 @@
+# Masking rules for mystrio.
+#
+# Two mechanisms are available for masking sensitive data in log lines:
+#   json_keys — mask a SCALAR value by its exact, case-sensitive key name,
+#               recursively; also masks the same key inside JSON that is
+#               embedded/escaped in a string field ("...\"iin\":\"...\"...").
+#               Object-valued keys (e.g. names) are NOT masked here — use regex.
+#   regex     — pattern replace over the (re)serialized line. For any pattern
+#               containing a quote, an escaped-quote variant (\"key\":\"val\")
+#               is compiled and applied automatically, so one rule covers both
+#               plain JSON and JSON escaped inside a string.
+
+json_keys:
+  # ИИН / БИН физлица и клиента. Ключи чувствительны к регистру, поэтому
+  # перечисляем все встречающиеся варианты (IIN, BIIN, CLIENT_BIIN, ...).
+  - name: iin
+    keys: [iin, IIN, biin, BIIN, bin, iinBin, CLIENT_BIIN]
+    replace: "************"
+
+  # Токены и заголовки авторизации — маскируем значение целиком.
+  - name: tokens
+    keys:
+      [
+        Authorization,
+        authorization,
+        access_token,
+        refresh_token,
+        id_token,
+        Cookie,
+        cookie,
+        Set-Cookie,
+      ]
+    replace: "***"
+
+  # Учётные данные.
+  - name: credentials
+    keys: [password, pwd, secret, client_secret]
+    replace: "***"
+
+  # Телефон как отдельное поле.
+  - name: phone
+    keys: [phone, telephone, msisdn]
+    replace: "***"
+
+  # Номера документов и счетов (удостоверение личности, номер счёта).
+  - name: doc_account_number
+    keys: [NUMBER, ACCOUNT_NUMBER, accountNumber]
+    replace: "***"
+
+  # Номер карты.
+  - name: card
+    keys: [MASK_CARD, cardNumber, pan, card_number]
+    replace: "***"
+
+  # ФИО в виде отдельных строковых полей (nameRu/nameKz/nameEn).
+  - name: names
+    keys: [nameRu, nameKz, nameEn, firstNameRu, lastNameRu, middleNameRu, fullName]
+    replace: "***"
+
+regex:
+  # ИИН / БИН как есть, вне JSON. json_keys маскирует ИИН только в форме
+  # "iin":"...", т.е. в строках, которые НЕ парсятся как JSON (SQL, logfmt,
+  # query-строки iin=..., «голый» номер в URL), значение оставалось видимым.
+  # ИИН/БИН РК — ровно 12 цифр; \b гарантирует, что 10/13-значные метки
+  # времени и epoch-таймстампы не попадут под маску.
+  - name: iin_bin_bare
+    pattern: '\b\d{12}\b'
+    replace: "************"
+
+  # e-mail
+  - name: email
+    pattern: '[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
+    replace: "***@***"
+
+  # Телефон в формате +7XXXXXXXXXX
+  - name: phone_e164
+    pattern: '\+7\d{10}'
+    replace: "+7**********"
+
+  # JWT: три base64url-сегмента через точку. Ловит Bearer-токены,
+  # access_token/refresh_token и токены внутри Cookie, где бы они ни были.
+  - name: jwt
+    pattern: 'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'
+    replace: "***"
+
+  # ФИО. Значение — объект {"KZ":..,"RU":..,"EN":..} либо строка.
+  # Ключ сохраняем через $1, чтобы не терять исходное имя поля.
+  - name: firstName
+    pattern: '"(FIRSTNAME|firstName)"\s*:\s*(?:\{[^}]*\}|"[^"]*")'
+    replace: '"${1}":"***"'
+  - name: lastName
+    pattern: '"(LASTNAME|lastName)"\s*:\s*(?:\{[^}]*\}|"[^"]*")'
+    replace: '"${1}":"***"'
+  - name: middleName
+    pattern: '"(MIDDLENAME|middleName)"\s*:\s*(?:\{[^}]*\}|"[^"]*")'
+    replace: '"${1}":"***"'
+  # ФИО: строка, объект {KZ,RU,EN} или обёртка {"value":..,"type":..} —
+  # значение маскируется целиком. [^}]* охватывает любой набор полей объекта.
+  - name: fullName
+    pattern: '"(FULLNAME|fullName)"\s*:\s*(?:\{[^}]*\}|"[^"]*")'
+    replace: '"${1}":"***"'
+
+  # Учётные данные в form-urlencoded теле (эндпоинт выдачи токена).
+  # Разделитель "&" сериализуется как &, поэтому останавливаемся на "\".
+  - name: form_username
+    pattern: 'username=[^\\&"]*'
+    replace: "username=***"
+  - name: form_password
+    pattern: 'password=[^\\&"]*'
+    replace: "password=***"
+
+  # Номер счёта / IBAN Казахстана (KZ + 2 цифры + 16 буквенно-цифровых).
+  - name: kz_iban
+    pattern: 'KZ\d{2}[0-9A-Z]{16}'
+    replace: "***"
+
+  # IPv4 клиента (X-Real-Ip, X-Forwarded-For и т.п.).
+  - name: ipv4
+    pattern: '\b(?:\d{1,3}\.){3}\d{1,3}\b'
+    replace: "***.***.***.***"
