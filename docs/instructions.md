@@ -1,15 +1,15 @@
-# mystrio — инструкция
+# mysterio — инструкция
 
 Маскирующий reverse-proxy перед Loki и/или Elasticsearch: чувствительные
 данные в логах маскируются «на лету», прежде чем попадут в Grafana. Grafana
-ходит не напрямую в Loki/Elasticsearch, а через mystrio.
+ходит не напрямую в Loki/Elasticsearch, а через mysterio.
 
 ---
 
 ## 1. Как работает сервис
 
 ```
-Grafana ──HTTP(S)──▶ mystrio ──HTTP(S)──▶ Loki / Elasticsearch (upstream)
+Grafana ──HTTP(S)──▶ mysterio ──HTTP(S)──▶ Loki / Elasticsearch (upstream)
                          │
                          └── маскирует чувствительные поля в ответе
 ```
@@ -71,7 +71,7 @@ IP-адреса клиента.
 | `PORT` | нет | `:8080` | Адрес и порт прослушивания |
 | `MAX_RESPONSE_BYTES` | нет | `33554432` (32 MiB) | Ответы больше этого размера проксируются **без** маскирования (общий лимит на оба бэкенда) |
 | `TEST_ME_ENABLED` | нет | `false` | Включает страницу предпросмотра маскирования `/test-me` |
-| `BASE_PATH` | нет | пусто (корень) | Префикс путей **только** для `/test-me` (например `/mystrio`); на `/loki`, `/elastic`, `/healthz` не влияет — если сервис висит за внешним reverse-proxy не на корне, префиксацию этих маршрутов решает он |
+| `BASE_PATH` | нет | пусто (корень) | Префикс путей **только** для `/test-me` (например `/mysterio`); на `/loki`, `/elastic`, `/healthz` не влияет — если сервис висит за внешним reverse-proxy не на корне, префиксацию этих маршрутов решает он |
 
 Сервис не стартует (падает с ошибкой при старте), если:
 - **ни один** из `LOKI_ENABLED`/`ELASTIC_ENABLED` не выставлен в `true`;
@@ -98,19 +98,19 @@ go run .
 ### Запуск бинарника
 
 ```bash
-go build -buildvcs=false -o bin/mystrio .
+go build -buildvcs=false -o bin/mysterio .
 LOKI_ENABLED=true LOKI_URL=https://loki-prod.example \
-  RULES_PATH=./configs/rules.yaml ./bin/mystrio
+  RULES_PATH=./configs/rules.yaml ./bin/mysterio
 ```
 
 ### Запуск в Docker
 
 ```bash
-docker build -t mystrio .
+docker build -t mysterio .
 docker run --rm -p 9999:8080 \
   -e LOKI_ENABLED=true \
   -e LOKI_URL=https://loki-prod.example \
-  mystrio
+  mysterio
 ```
 
 Чтобы включить также Elasticsearch, добавьте `-e ELASTIC_ENABLED=true -e ELASTIC_URL=...`.
@@ -123,8 +123,8 @@ docker run --rm -p 9999:8080 \
 docker run --rm -p 9999:8080 \
   -e LOKI_ENABLED=true \
   -e LOKI_URL=https://loki-prod.example \
-  -v $(pwd)/configs/rules.yaml:/etc/mystrio/rules.yaml:ro \
-  mystrio
+  -v $(pwd)/configs/rules.yaml:/etc/mysterio/rules.yaml:ro \
+  mysterio
 ```
 
 Изменения в файле на хосте применяются после перезапуска контейнера.
@@ -135,19 +135,19 @@ docker run --rm -p 9999:8080 \
 
 ## 3. Датасорсы в Grafana (внешняя Grafana)
 
-Внешняя (уже развёрнутая) Grafana должна указывать на **mystrio**, а не на
+Внешняя (уже развёрнутая) Grafana должна указывать на **mysterio**, а не на
 Loki/Elasticsearch напрямую — иначе маскирование обходится.
 
 ### Loki
 
-1. Разверните mystrio так, чтобы он был **сетево доступен из Grafana**
-   (например, `https://mystrio.example` или `http://<host>:9999`).
+1. Разверните mysterio так, чтобы он был **сетево доступен из Grafana**
+   (например, `https://mysterio.example` или `http://<host>:9999`).
 2. В Grafana: **Connections → Data sources → Add data source → Loki**.
 3. Заполните:
-   - **URL** — адрес mystrio **с префиксом `/loki`**, напр.
-     `https://mystrio.example/loki` (НЕ адрес Loki и НЕ корень mystrio).
+   - **URL** — адрес mysterio **с префиксом `/loki`**, напр.
+     `https://mysterio.example/loki` (НЕ адрес Loki и НЕ корень mysterio).
    - **Authentication** — если upstream Loki требует Basic Auth, включите
-     **Basic authentication** и укажите логин/пароль. mystrio передаёт их
+     **Basic authentication** и укажите логин/пароль. mysterio передаёт их
      в Loki без изменений.
    - при необходимости **Skip TLS verify** (для self-signed сертификатов).
 4. **Save & test**.
@@ -156,13 +156,13 @@ Loki/Elasticsearch напрямую — иначе маскирование об
 
 Аналогично, но:
 - **Connections → Data sources → Add data source → Elasticsearch**.
-- **URL** — адрес mystrio **с префиксом `/elastic`**, напр.
-  `https://mystrio.example/elastic`.
+- **URL** — адрес mysterio **с префиксом `/elastic`**, напр.
+  `https://mysterio.example/elastic`.
 - Маскируются только ответы `_search`/`_msearch` (обычные запросы Grafana
   за логами); служебные запросы (список индексов, `_field_caps` для
   автокомплита полей) проксируются как есть.
 
-> Важно: URL — это точка входа mystrio (с нужным префиксом), а не адрес
+> Важно: URL — это точка входа mysterio (с нужным префиксом), а не адрес
 > Loki/Elasticsearch напрямую. Убедитесь, что это не публичный адрес
 > upstream и не `localhost` внутри чужого контейнера.
 
@@ -179,7 +179,7 @@ datasources:
     type: loki
     access: proxy
     uid: loki
-    url: https://mystrio.example/loki   # адрес mystrio, с префиксом /loki
+    url: https://mysterio.example/loki   # адрес mysterio, с префиксом /loki
     isDefault: true
     basicAuth: true
     basicAuthUser: $LOKI_USER
@@ -192,9 +192,9 @@ datasources:
 ```
 
 > В комплекте есть готовый локальный стенд (`docker-compose.yml` + `run.sh`) с
-> Grafana и датасорсом. Там Grafana обращается к `http://mystrio:8080/loki`
+> Grafana и датасорсом. Там Grafana обращается к `http://mysterio:8080/loki`
 > по внутренней сети compose. Для **внешней** Grafana используйте внешний
-> адрес mystrio, как описано выше.
+> адрес mysterio, как описано выше.
 
 ---
 
@@ -211,7 +211,7 @@ datasources:
   этапе сборки), `RULES_PATH` в образе указывает на него — образ работает
   без внешнего volume. Для локального стенда (`docker-compose.yml`) этот
   путь смонтирован поверх файлом `configs/rules.yaml` из репозитория, так
-  что правки применяются через `docker compose restart mystrio`, без
+  что правки применяются через `docker compose restart mysterio`, без
   пересборки образа.
 - Регулярные выражения проверяются на компиляцию при старте сервиса; невалидный
   паттерн (или отсутствующий/нечитаемый файл) не даст сервису стартовать.

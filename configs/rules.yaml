@@ -1,4 +1,4 @@
-# Masking rules for mystrio.
+# Masking rules for mysterio.
 #
 # Two mechanisms are available for masking sensitive data in log lines:
 #   json_keys — mask a SCALAR value by its exact, case-sensitive key name,

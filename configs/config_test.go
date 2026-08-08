@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	config "mystrio/configs"
+	config "mysterio/configs"
 )
 
 func TestLoadRules_JSONKeysAndRegex(t *testing.T) {
@@ -179,13 +179,13 @@ func TestLoad_BasePath_Valid(t *testing.T) {
 	clearBackendEnv(t)
 	t.Setenv("LOKI_ENABLED", "true")
 	t.Setenv("LOKI_URL", "http://loki:3100")
-	t.Setenv("BASE_PATH", "/mystrio")
+	t.Setenv("BASE_PATH", "/mysterio")
 	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BasePath != "/mystrio" {
+	if cfg.BasePath != "/mysterio" {
 		t.Fatalf("unexpected BasePath: %q", cfg.BasePath)
 	}
 }
@@ -194,7 +194,7 @@ func TestLoad_BasePath_MissingLeadingSlash_Error(t *testing.T) {
 	clearBackendEnv(t)
 	t.Setenv("LOKI_ENABLED", "true")
 	t.Setenv("LOKI_URL", "http://loki:3100")
-	t.Setenv("BASE_PATH", "mystrio")
+	t.Setenv("BASE_PATH", "mysterio")
 	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected error for BASE_PATH without leading '/'")
@@ -205,7 +205,7 @@ func TestLoad_BasePath_TrailingSlash_Error(t *testing.T) {
 	clearBackendEnv(t)
 	t.Setenv("LOKI_ENABLED", "true")
 	t.Setenv("LOKI_URL", "http://loki:3100")
-	t.Setenv("BASE_PATH", "/mystrio/")
+	t.Setenv("BASE_PATH", "/mysterio/")
 	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected error for BASE_PATH with trailing '/'")

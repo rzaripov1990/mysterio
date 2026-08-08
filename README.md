@@ -1,13 +1,13 @@
-# mystrio
+# mysterio
 
 A masking reverse-proxy that sits between Grafana and your log/observability
-backends. Grafana talks to **mystrio**, never directly to Loki or
-Elasticsearch — mystrio forwards the request, and on the way back masks
+backends. Grafana talks to **mysterio**, never directly to Loki or
+Elasticsearch — mysterio forwards the request, and on the way back masks
 sensitive fields (IIN/BIN, names, phones, e-mails, tokens, card/account
 numbers, IPs, etc.) in the response before Grafana ever sees it.
 
 ```
-Grafana ──HTTP(S)──▶ mystrio ──HTTP(S)──▶ Loki / Elasticsearch (upstream)
+Grafana ──HTTP(S)──▶ mysterio ──HTTP(S)──▶ Loki / Elasticsearch (upstream)
                          │
                          └── masks sensitive fields in the response
 ```
@@ -23,8 +23,8 @@ Grafana ──HTTP(S)──▶ mystrio ──HTTP(S)──▶ Loki / Elasticsear
 - Both backends are optional and independently toggled — run with just
   Loki, just Elasticsearch, or both.
 - Auth headers (`Authorization`, Basic Auth) are passed through unchanged;
-  mystrio does not store or substitute credentials.
-- mystrio's own logs contain only request metadata (path, status,
+  mysterio does not store or substitute credentials.
+- mysterio's own logs contain only request metadata (path, status,
   content-type) — never log content or secrets.
 - An optional `/test-me` page lets you paste a candidate `rules.yaml` and a
   log line and preview the masked result, without touching the live rules.
@@ -43,8 +43,8 @@ go run .
 Or:
 
 ```bash
-go build -o bin/mystrio .
-./bin/mystrio
+go build -o bin/mysterio .
+./bin/mysterio
 ```
 
 At least one of `LOKI_ENABLED`/`ELASTIC_ENABLED` must be `true`, or the
@@ -62,12 +62,12 @@ stack below, whose defaults leave both `false`.
 | `PORT` | `:8080` | Listen address |
 | `MAX_RESPONSE_BYTES` | `33554432` | Skip masking above this size (shared by both backends) |
 | `TEST_ME_ENABLED` | `false` | Enable the `/test-me` masking-preview UI |
-| `BASE_PATH` | `` (root) | Path prefix for `/test-me` only (e.g. `/mystrio`); does not affect `/loki`, `/elastic`, `/healthz` |
+| `BASE_PATH` | `` (root) | Path prefix for `/test-me` only (e.g. `/mysterio`); does not affect `/loki`, `/elastic`, `/healthz` |
 | `RULES_PATH` | — | Path to the masking rules YAML file; required, loaded once at startup |
 
 Masking rules are loaded from the file at `RULES_PATH` **once, at process
 startup** — there is no hot-reload. To change rules, edit the file and
-restart the process (or `docker compose restart mystrio` — no image rebuild
+restart the process (or `docker compose restart mysterio` — no image rebuild
 needed if the file is bind-mounted, see below). The same rules apply to both
 Loki and Elasticsearch: `json_keys` rules mask matching keys recursively in
 both; the `regex` rules apply only to Loki log lines (Elasticsearch
@@ -91,17 +91,17 @@ and preview the masked result. The rules editor is prefilled with the
 service's actual embedded rules, but **edits there are never applied to the
 running service** — each preview parses the submitted rules fresh and
 discards them. Off by default; not intended to be exposed outside a
-trusted network (mystrio has no built-in auth).
+trusted network (mysterio has no built-in auth).
 
 The YAML editor uses [CodeMirror 5](https://codemirror.net/5/) (MIT
-licensed), vendored under `internal/testme/vendor/` and served by mystrio
+licensed), vendored under `internal/testme/vendor/` and served by mysterio
 itself via `go:embed` — no CDN, no network calls from the browser other than
-back to mystrio.
+back to mysterio.
 
 ## Local Grafana (docker compose)
 
-Grafana and mystrio run in one compose network. Loki datasource URL is
-`http://mystrio:8080/loki` — **not** `localhost` / `0.0.0.0` (those point
+Grafana and mysterio run in one compose network. Loki datasource URL is
+`http://mysterio:8080/loki` — **not** `localhost` / `0.0.0.0` (those point
 inside the Grafana container).
 
 ```bash
@@ -114,15 +114,15 @@ export LOKI_URL=https://loki-prod.example
 - Grafana: http://localhost:3000 (admin/admin)
 - Proxy on host: http://localhost:9999/healthz
 - Masking test UI (on by default in compose): http://localhost:9999/test-me
-- Request logs: `docker compose logs -f mystrio`
+- Request logs: `docker compose logs -f mysterio`
 - Rules: bind-mounted from `configs/rules.yaml` — edit that file and run
-  `docker compose restart mystrio` to apply, no rebuild needed.
+  `docker compose restart mysterio` to apply, no rebuild needed.
 
-Open dashboard **Mystrio Logs**.
+Open dashboard **mysterio Logs**.
 
 To also proxy Elasticsearch, set `ELASTIC_ENABLED=true` and `ELASTIC_URL=...`
 before running `./run.sh` (see `docker-compose.yml`), then add a Grafana
-Elasticsearch datasource pointed at `http://mystrio:8080/elastic`.
+Elasticsearch datasource pointed at `http://mysterio:8080/elastic`.
 
 Variables (examples):
 - `namespace` (`k8s_namespace`) — custom: `bank`, `digital`, `infra`, `actions`

@@ -47,7 +47,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["loki", "mystrio"],
+  "tags": ["loki", "mysterio"],
   "templating": {
     "list": [
       {
@@ -135,7 +135,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Mystrio Logs",
-  "uid": "mystrio-logs",
+  "title": "mysterio Logs",
+  "uid": "mysterio-logs",
   "version": 2
 }

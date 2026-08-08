@@ -33,7 +33,7 @@ jobs:
           file: Dockerfile
           push: false
           load: true
-          tags: mystrio-scan:latest
+          tags: mysterio-scan:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -43,7 +43,7 @@ jobs:
       - name: Scan image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: mystrio-scan:latest
+          image-ref: mysterio-scan:latest
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -76,5 +76,5 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            rzaripov1990/mystrio:${{ github.ref_name }}
-            rzaripov1990/mystrio:latest
+            rzaripov1990/mysterio:${{ github.ref_name }}
+            rzaripov1990/mysterio:latest

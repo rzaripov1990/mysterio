@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	config "mystrio/configs"
-	"mystrio/internal/masker"
-	"mystrio/internal/proxy"
+	config "mysterio/configs"
+	"mysterio/internal/masker"
+	"mysterio/internal/proxy"
 )
 
 func TestMaskResponseBody_QueryRange(t *testing.T) {

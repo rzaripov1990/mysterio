@@ -8,8 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 
-	config "mystrio/configs"
-	"mystrio/internal/masker"
+	config "mysterio/configs"
+	"mysterio/internal/masker"
 )
 
 //go:embed page.html
@@ -21,7 +21,7 @@ var vendorFS embed.FS
 const maxRequestBytes = 1 << 20 // 1 MiB
 
 // NewHandler returns an http.Handler serving the masking-test UI and its
-// API under basePath (e.g. "" for root, or "/mystrio"):
+// API under basePath (e.g. "" for root, or "/mysterio"):
 //   - GET  {basePath}/test-me           the HTML page
 //   - GET  {basePath}/test-me/api/rules the embedded rules.yaml, verbatim
 //   - POST {basePath}/test-me/api/mask  masks a log line against rules

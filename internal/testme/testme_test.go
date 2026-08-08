@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"mystrio/internal/testme"
+	"mysterio/internal/testme"
 )
 
 const testRulesYAML = `
@@ -119,7 +119,7 @@ func TestNewHandler_Mask_EmptyLog(t *testing.T) {
 }
 
 func TestNewHandler_BasePath_PrefixesRoutes(t *testing.T) {
-	h := testme.NewHandler("/mystrio", []byte(testRulesYAML))
+	h := testme.NewHandler("/mysterio", []byte(testRulesYAML))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
@@ -129,10 +129,10 @@ func TestNewHandler_BasePath_PrefixesRoutes(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/mystrio/test-me", nil)
+	req = httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected /mystrio/test-me to serve the page, got %d", rec.Code)
+		t.Fatalf("expected /mysterio/test-me to serve the page, got %d", rec.Code)
 	}
 }
 
@@ -153,21 +153,21 @@ func TestNewHandler_VendorAssets_Served(t *testing.T) {
 }
 
 func TestNewHandler_Page_UsesBasePathForVendorAssets(t *testing.T) {
-	h := testme.NewHandler("/mystrio", []byte(testRulesYAML))
+	h := testme.NewHandler("/mysterio", []byte(testRulesYAML))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/mystrio/test-me", nil)
+	req := httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "/mystrio/test-me/vendor/codemirror.min.js") {
+	if !strings.Contains(body, "/mysterio/test-me/vendor/codemirror.min.js") {
 		t.Fatalf("expected page to reference base-path-prefixed vendor script, got: %s", body)
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/mystrio/test-me/vendor/codemirror.min.js", nil)
+	req = httptest.NewRequest(http.MethodGet, "/mysterio/test-me/vendor/codemirror.min.js", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected vendor asset to be served under basePath, got %d", rec.Code)

@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	config "mystrio/configs"
-	"mystrio/internal/masker"
-	"mystrio/internal/proxy"
+	config "mysterio/configs"
+	"mysterio/internal/masker"
+	"mysterio/internal/proxy"
 )
 
 func testMasker(t *testing.T) *masker.Masker {

@@ -6,7 +6,7 @@ datasources:
     access: proxy
     uid: loki
     # Same docker network — do NOT use localhost/0.0.0.0 from Grafana container
-    url: http://mystrio:8080/loki
+    url: http://mysterio:8080/loki
     isDefault: true
     editable: true
     basicAuth: true

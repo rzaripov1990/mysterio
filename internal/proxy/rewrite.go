@@ -3,7 +3,7 @@ package proxy
 import (
 	"encoding/json"
 
-	"mystrio/internal/masker"
+	"mysterio/internal/masker"
 )
 
 // MaskResponseBody masks log lines in Loki query JSON (data.result[].values[][1]).

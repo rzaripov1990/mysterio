@@ -3,7 +3,7 @@ package proxy
 import (
 	"encoding/json"
 
-	"mystrio/internal/masker"
+	"mysterio/internal/masker"
 )
 
 // MaskElasticResponseBody masks _source fields (by JSON key, same rules

@@ -1,4 +1,4 @@
-module mystrio
+module mysterio
 
 go 1.26.5
 

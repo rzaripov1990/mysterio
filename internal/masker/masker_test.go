@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	config "mystrio/configs"
-	"mystrio/internal/masker"
+	config "mysterio/configs"
+	"mysterio/internal/masker"
 )
 
 func mustLoad(t *testing.T, content []byte) config.Rules {

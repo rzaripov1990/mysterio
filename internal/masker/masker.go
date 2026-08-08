@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	config "mystrio/configs"
+	config "mysterio/configs"
 )
 
 type Masker struct {

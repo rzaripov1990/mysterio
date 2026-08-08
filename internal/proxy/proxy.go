@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	config "mystrio/configs"
-	"mystrio/internal/masker"
-	"mystrio/internal/testme"
+	config "mysterio/configs"
+	"mysterio/internal/masker"
+	"mysterio/internal/testme"
 )
 
 func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
