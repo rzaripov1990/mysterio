@@ -102,8 +102,10 @@ func TestNewHandler_LokiRouting_GatewayPrefix(t *testing.T) {
 	}
 }
 
-func TestNewHandler_LokiRouting_NativeDoublePrefix(t *testing.T) {
-	// Native Loki on /api/v1: Grafana double-prefix /loki/loki/... must become /api/v1/...
+func TestNewHandler_LokiRouting_NoURLPath_KeepsDoublePrefix(t *testing.T) {
+	// LOKI_URL without /loki path + Grafana double-prefix (datasource ends with /loki):
+	// /loki/loki/api → strip → /loki/api — must stay /loki/api for gateways (do not
+	// strip again to /api, that returns 404 page not found).
 	var gotPath string
 	loki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -121,8 +123,8 @@ func TestNewHandler_LokiRouting_NativeDoublePrefix(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/loki/loki/api/v1/query_range", nil)
 	h.ServeHTTP(rec, req)
-	if gotPath != "/api/v1/query_range" {
-		t.Fatalf("expected upstream /api/v1/query_range, got %q", gotPath)
+	if gotPath != "/loki/api/v1/query_range" {
+		t.Fatalf("expected upstream /loki/api/v1/query_range, got %q", gotPath)
 	}
 }
 

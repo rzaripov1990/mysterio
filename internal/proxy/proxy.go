@@ -119,13 +119,14 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 // normalizeLokiUpstreamPath maps the path left after StripPrefix("/loki") onto the
 // upstream Loki (or gateway) path.
 //
-//   - prefix "" (native Loki on /api/v1): drop a stray /loki from Grafana double-prefix
-//   - prefix "/loki" (gateway): ensure exactly one /loki before /api/...
+//   - prefix "" (LOKI_URL has no path): leave the path as-is after StripPrefix.
+//     Grafana with datasource .../loki often calls /loki/loki/api/v1/... → after
+//     strip that is /loki/api/v1/..., which gateways under /loki need. Do NOT strip
+//     that remaining /loki — that broke prod (404 on /api/v1/...).
+//   - prefix "/loki" (LOKI_URL=https://host/loki): ensure exactly one /loki before
+//     /api/..., so both /loki/api/... and /loki/loki/api/... from Grafana work.
 func normalizeLokiUpstreamPath(path, prefix string) string {
 	if prefix == "" {
-		if strings.HasPrefix(path, "/loki/api/") || path == "/loki/api" {
-			return strings.TrimPrefix(path, "/loki")
-		}
 		return path
 	}
 	if path == prefix || strings.HasPrefix(path, prefix+"/") {

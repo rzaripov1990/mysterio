@@ -96,22 +96,22 @@ Two different `/loki` prefixes are easy to confuse:
 
 Grafana may call either `/loki/api/v1/...` or `/loki/loki/api/v1/...`
 (depends on Grafana version and whether the datasource URL already ends
-with `/loki`). mysterio normalizes both to the correct upstream path:
+with `/loki`). mysterio strips its mount prefix once, then:
 
-- `LOKI_URL=https://host/loki` (gateway with `/loki` prefix) → upstream
-  `/loki/api/v1/...`
-- `LOKI_URL=http://loki:3100` (native Loki on `/api/v1`) → upstream
-  `/api/v1/...`
+- If `LOKI_URL` includes a path (e.g. `https://host/loki`), that path is
+  the upstream prefix: both Grafana styles are normalized to
+  `/loki/api/v1/...`.
+- If `LOKI_URL` has **no** path (e.g. `https://host`), the path after
+  strip is forwarded as-is. With Grafana double-prefix
+  (`/loki/loki/api/...` → `/loki/api/...`) this matches gateways under
+  `/loki`. Prefer setting `LOKI_URL=https://host/loki` so single-prefix
+  Grafana also works.
 
-**Symptom of a wrong `LOKI_URL`:** Grafana shows
-`Status: 500. Message: unknown result type:` while the same LogQL works
-against Loki without mysterio. mysterio is usually returning plain-text
-`404 page not found` from the gateway (Grafana cannot parse a Loki
-`resultType` out of that body). Fix: set `LOKI_URL` to include the
-gateway prefix, e.g. `https://loki.example/loki`.
-
-Grafana datasource URL stays `http://mysterio:8080/loki` either way —
-only `LOKI_URL` on the mysterio side needs the upstream prefix.
+**Symptom of a wrong upstream path:** Grafana shows
+`Status: 500. Message: unknown result type:` or label browser fails,
+while mysterio logs `upstream ... status=404 content_type=text/plain`
+and body `404 page not found`. Fix `LOKI_URL` (include `/loki` when the
+gateway needs it) — do **not** change the Grafana datasource URL.
 
 ## Masking test UI
 

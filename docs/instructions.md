@@ -69,26 +69,27 @@ IP-адреса клиента.
 
 Grafana в зависимости от версии и того, заканчивается ли URL датасорса на
 `/loki`, может вызвать либо `/loki/api/v1/...`, либо `/loki/loki/api/v1/...`.
-mysterio нормализует оба варианта:
+mysterio один раз срезает свой mount `/loki`, затем:
 
-- `LOKI_URL=https://host/loki` (gateway с префиксом `/loki`) → upstream
-  `/loki/api/v1/...`
-- `LOKI_URL=http://loki:3100` («голый» Loki на `/api/v1`) → upstream
-  `/api/v1/...`
+- если в `LOKI_URL` есть path (`https://host/loki`) — это префикс upstream;
+  оба варианта Grafana нормализуются в `/loki/api/v1/...`;
+- если path в `LOKI_URL` **нет** (`https://host`) — путь после strip
+  уходит как есть. При двойном префиксе Grafana
+  (`/loki/loki/api/...` → `/loki/api/...`) это совпадает с gateway под
+  `/loki`. Надёжнее сразу задать `LOKI_URL=https://host/loki`, чтобы
+  работал и одиночный `/loki/api/...`.
 
-**Типичный симптом неверного `LOKI_URL`:** в Grafana
-`Status: 500. Message: unknown result type:`, а тот же LogQL без mysterio
-работает. Обычно mysterio отдаёт Grafana тело `404 page not found` от
-gateway (это не JSON Loki, поля `resultType` нет). Исправление: в
-`LOKI_URL` указать префикс gateway, например `https://loki.example/loki`.
-URL датасорса Grafana при этом **не меняется** —
-`http://mysterio:8080/loki` остаётся верным.
+**Типичный симптом неверного upstream path:** в Grafana
+`unknown result type:` / не грузятся labels, в логах mysterio
+`status=404 content_type=text/plain` и тело `404 page not found`.
+Чините `LOKI_URL` (нужен ли суффикс `/loki`), URL датасорса Grafana
+(`…/mysterio/loki`) не меняйте.
 
-Почему локально могло «просто работать», а на другой Grafana — нет: одна
-версия бьёт в `/loki/loki/api/...` (после одного `StripPrefix` получается
-верный `/loki/api/...` даже при `LOKI_URL` без path), другая — в
-`/loki/api/...` (после strip уходит на `/api/...` и ловит 404). Нормализация
-пути как раз убирает эту зависимость от версии Grafana.
+Пример с вашим ingress (`/mysterio` → rewrite в mysterio):
+
+- Grafana datasource: `https://dev-svc.kmf.kz/mysterio/loki`
+- Ingress отдаёт в под: `/loki/...` или `/loki/loki/...`
+- `LOKI_URL` должен быть вида `https://<loki-gateway>/loki`
 
 ---
 
