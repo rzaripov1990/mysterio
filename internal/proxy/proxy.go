@@ -60,13 +60,32 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 		return nil, err
 	}
 
-	rp := httputil.NewSingleHostReverseProxy(upstream)
+	// For Loki, keep path prefix from LOKI_URL (e.g. https://host/loki) separately and
+	// drive the reverse proxy off the host root. Grafana may call either
+	// /loki/api/v1/... or /loki/loki/api/v1/... depending on datasource URL/version;
+	// after StripPrefix("/loki") those become /api/v1/... or /loki/api/v1/..., and we
+	// normalize to what the upstream actually serves.
+	pathPrefix := ""
+	proxyTarget := upstream
+	if !elastic {
+		pathPrefix = strings.TrimSuffix(upstream.Path, "/")
+		base := *upstream
+		base.Path = ""
+		base.RawPath = ""
+		proxyTarget = &base
+	}
+
+	rp := httputil.NewSingleHostReverseProxy(proxyTarget)
 	rp.Transport = &http.Transport{ResponseHeaderTimeout: 30 * time.Second}
 
 	originalDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.Host = upstream.Host
+		if !elastic {
+			req.URL.Path = normalizeLokiUpstreamPath(req.URL.Path, pathPrefix)
+			req.URL.RawPath = ""
+		}
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
 		req := resp.Request
@@ -95,6 +114,27 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
 	return rp, nil
+}
+
+// normalizeLokiUpstreamPath maps the path left after StripPrefix("/loki") onto the
+// upstream Loki (or gateway) path.
+//
+//   - prefix "" (native Loki on /api/v1): drop a stray /loki from Grafana double-prefix
+//   - prefix "/loki" (gateway): ensure exactly one /loki before /api/...
+func normalizeLokiUpstreamPath(path, prefix string) string {
+	if prefix == "" {
+		if strings.HasPrefix(path, "/loki/api/") || path == "/loki/api" {
+			return strings.TrimPrefix(path, "/loki")
+		}
+		return path
+	}
+	if path == prefix || strings.HasPrefix(path, prefix+"/") {
+		return path
+	}
+	if path == "/api" || strings.HasPrefix(path, "/api/") {
+		return prefix + path
+	}
+	return path
 }
 
 func modifyResponse(resp *http.Response, cfg config.Config, m *masker.Masker) error {

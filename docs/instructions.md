@@ -15,12 +15,13 @@ Grafana ──HTTP(S)──▶ mysterio ──HTTP(S)──▶ Loki / Elasticsea
 ```
 
 - **Reverse-proxy, два независимых бэкенда.** `/loki/*` проксируется на
-  `LOKI_URL` (префикс отрезается), `/elastic/*` — на `ELASTIC_URL`
-  (аналогично). Каждый бэкенд включается отдельно (`LOKI_ENABLED`,
-  `ELASTIC_ENABLED`) — можно держать только Loki, только Elasticsearch, или
-  оба сразу. Заголовки авторизации (`Authorization`, Basic Auth)
-  **передаются как есть** для обоих бэкендов — сервис не хранит и не
-  подменяет учётные данные.
+  `LOKI_URL`, `/elastic/*` — на `ELASTIC_URL`. Префикс маршрута mysterio
+  (`/loki` или `/elastic`) отрезается; для Loki путь к upstream ещё
+  нормализуется (см. ниже «Префиксы `/loki`»). Каждый бэкенд включается
+  отдельно (`LOKI_ENABLED`, `ELASTIC_ENABLED`) — можно держать только Loki,
+  только Elasticsearch, или оба сразу. Заголовки авторизации
+  (`Authorization`, Basic Auth) **передаются как есть** для обоих бэкендов —
+  сервис не хранит и не подменяет учётные данные.
 - **Health-check.** `GET /healthz` → `ok`. Используется для liveness/readiness.
 - **Маскирование ответа Loki.** Обрабатывается только тело ответа. Сервис:
   - пропускает без изменений ответы со статусом `>= 400`, websocket-апгрейды
@@ -57,6 +58,38 @@ Grafana ──HTTP(S)──▶ mysterio ──HTTP(S)──▶ Loki / Elasticsea
 Cookie, JWT), учётные данные форм, номера документов/счетов/карт, IBAN РК,
 IP-адреса клиента.
 
+### Префиксы `/loki`: Grafana vs upstream
+
+Два разных `/loki` легко перепутать:
+
+| Где | Пример | Смысл |
+| --- | --- | --- |
+| **URL датасорса в Grafana** | `http://mysterio:8080/loki` | Вход в mysterio (Grafana **не** должна ходить в Loki напрямую) |
+| **`LOKI_URL`** | `https://loki.example/loki` | Базовый URL upstream Loki / gateway |
+
+Grafana в зависимости от версии и того, заканчивается ли URL датасорса на
+`/loki`, может вызвать либо `/loki/api/v1/...`, либо `/loki/loki/api/v1/...`.
+mysterio нормализует оба варианта:
+
+- `LOKI_URL=https://host/loki` (gateway с префиксом `/loki`) → upstream
+  `/loki/api/v1/...`
+- `LOKI_URL=http://loki:3100` («голый» Loki на `/api/v1`) → upstream
+  `/api/v1/...`
+
+**Типичный симптом неверного `LOKI_URL`:** в Grafana
+`Status: 500. Message: unknown result type:`, а тот же LogQL без mysterio
+работает. Обычно mysterio отдаёт Grafana тело `404 page not found` от
+gateway (это не JSON Loki, поля `resultType` нет). Исправление: в
+`LOKI_URL` указать префикс gateway, например `https://loki.example/loki`.
+URL датасорса Grafana при этом **не меняется** —
+`http://mysterio:8080/loki` остаётся верным.
+
+Почему локально могло «просто работать», а на другой Grafana — нет: одна
+версия бьёт в `/loki/loki/api/...` (после одного `StripPrefix` получается
+верный `/loki/api/...` даже при `LOKI_URL` без path), другая — в
+`/loki/api/...` (после strip уходит на `/api/...` и ловит 404). Нормализация
+пути как раз убирает эту зависимость от версии Grafana.
+
 ---
 
 ## 2. Настройка сервиса (переменные окружения)
@@ -64,7 +97,7 @@ IP-адреса клиента.
 | Переменная | Обязательна | По умолчанию | Описание |
 | --- | --- | --- | --- |
 | `LOKI_ENABLED` | нет | `false` | Включает маршрут `/loki/*` |
-| `LOKI_URL` | да, если `LOKI_ENABLED=true` | — | Базовый URL upstream Loki, например `https://loki-prod.example` |
+| `LOKI_URL` | да, если `LOKI_ENABLED=true` | — | Базовый URL upstream Loki. Если Loki за gateway с префиксом `/loki`, укажите его в URL: `https://loki-prod.example/loki`. Для «голого» Loki на `/api/v1` — без path: `http://loki:3100` |
 | `ELASTIC_ENABLED` | нет | `false` | Включает маршрут `/elastic/*` |
 | `ELASTIC_URL` | да, если `ELASTIC_ENABLED=true` | — | Базовый URL upstream Elasticsearch |
 | `RULES_PATH` | да | — | Путь к YAML-файлу с правилами маскирования; читается один раз при старте |
@@ -89,7 +122,8 @@ IP-адреса клиента.
 
 ```bash
 export LOKI_ENABLED=true
-export LOKI_URL=https://loki-prod.example
+# Gateway с /loki; для native Loki: http://loki:3100 (без path).
+export LOKI_URL=https://loki-prod.example/loki
 export RULES_PATH=./configs/rules.yaml
 export PORT=:8080
 go run .
@@ -99,7 +133,7 @@ go run .
 
 ```bash
 go build -buildvcs=false -o bin/mysterio .
-LOKI_ENABLED=true LOKI_URL=https://loki-prod.example \
+LOKI_ENABLED=true LOKI_URL=https://loki-prod.example/loki \
   RULES_PATH=./configs/rules.yaml ./bin/mysterio
 ```
 
@@ -109,7 +143,7 @@ LOKI_ENABLED=true LOKI_URL=https://loki-prod.example \
 docker build -t mysterio .
 docker run --rm -p 9999:8080 \
   -e LOKI_ENABLED=true \
-  -e LOKI_URL=https://loki-prod.example \
+  -e LOKI_URL=https://loki-prod.example/loki \
   mysterio
 ```
 
@@ -122,7 +156,7 @@ docker run --rm -p 9999:8080 \
 ```bash
 docker run --rm -p 9999:8080 \
   -e LOKI_ENABLED=true \
-  -e LOKI_URL=https://loki-prod.example \
+  -e LOKI_URL=https://loki-prod.example/loki \
   -v $(pwd)/configs/rules.yaml:/etc/mysterio/rules.yaml:ro \
   mysterio
 ```
@@ -146,11 +180,15 @@ Loki/Elasticsearch напрямую — иначе маскирование об
 3. Заполните:
    - **URL** — адрес mysterio **с префиксом `/loki`**, напр.
      `https://mysterio.example/loki` (НЕ адрес Loki и НЕ корень mysterio).
+     Этот `/loki` — маршрут **в mysterio**, его не путать с path в
+     `LOKI_URL` (см. «Префиксы `/loki`» выше).
    - **Authentication** — если upstream Loki требует Basic Auth, включите
      **Basic authentication** и укажите логин/пароль. mysterio передаёт их
      в Loki без изменений.
    - при необходимости **Skip TLS verify** (для self-signed сертификатов).
-4. **Save & test**.
+4. **Save & test**. Если тест падает с `unknown result type:`, проверьте
+   `LOKI_URL` на стороне mysterio (нужен ли суффикс `/loki` у gateway), а не
+   URL датасорса в Grafana.
 
 ### Elasticsearch
 

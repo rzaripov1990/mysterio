@@ -37,7 +37,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "{k8s_cluster=\"kuber-prod\", k8s_namespace_name=\"$namespace\", k8s_app=\"$k8s_app\"} |= \"$find\"",
+          "expr": "{k8s_namespace_name=\"$namespace\", k8s_app=~\"$k8s_app\"} |~ \"$query1|$or\" |~ \"$query2\" |~ \"$query3\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -81,9 +81,14 @@
             "selected": false,
             "text": "onbank",
             "value": "onbank"
+          },
+          {
+            "selected": false,
+            "text": "a2a",
+            "value": "a2a"
           }
         ],
-        "query": "bpf-msa,bpf-ob,bos,onbank",
+        "query": "bpf-msa,bpf-ob,bos,onbank,a2a",
         "skipUrlSync": false,
         "type": "custom"
       },
@@ -110,20 +115,80 @@
       {
         "current": {
           "selected": false,
-          "text": "",
-          "value": ""
+          "text": ".*",
+          "value": ".*"
         },
         "hide": 0,
-        "label": "find",
-        "name": "find",
+        "label": "query1",
+        "name": "query1",
         "options": [
           {
             "selected": true,
-            "text": "",
-            "value": ""
+            "text": ".*",
+            "value": ".*"
           }
         ],
-        "query": "",
+        "query": ".*",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "or",
+        "name": "or",
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "query": ".*",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "query2",
+        "name": "query2",
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "query": ".*",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "query3",
+        "name": "query3",
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "query": ".*",
         "skipUrlSync": false,
         "type": "textbox"
       }
@@ -137,5 +202,5 @@
   "timezone": "browser",
   "title": "mysterio Logs",
   "uid": "mysterio-logs",
-  "version": 2
+  "version": 3
 }

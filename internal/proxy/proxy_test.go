@@ -37,7 +37,7 @@ func TestNewHandler_LokiRouting_StripsPrefix(t *testing.T) {
 	loki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"success"}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"streams","result":[]}}`))
 	}))
 	defer loki.Close()
 
@@ -56,6 +56,73 @@ func TestNewHandler_LokiRouting_StripsPrefix(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestNewHandler_LokiRouting_GatewayPrefix(t *testing.T) {
+	// LOKI_URL includes /loki (common ingress). Grafana may call /loki/api/... or
+	// /loki/loki/api/...; both must land on upstream /loki/api/v1/query_range.
+	var gotPath string
+	loki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"streams","result":[]}}`))
+	}))
+	defer loki.Close()
+
+	cfg := config.Config{
+		MaxResponseBytes: 1 << 20,
+		LokiEnabled:      true,
+		LokiURL:          loki.URL + "/loki",
+	}
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, in := range []string{"/loki/api/v1/query_range", "/loki/loki/api/v1/query_range"} {
+		gotPath = ""
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, in, nil)
+		h.ServeHTTP(rec, req)
+		if gotPath != "/loki/api/v1/query_range" {
+			t.Fatalf("%s: expected upstream /loki/api/v1/query_range, got %q", in, gotPath)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d body=%s", in, rec.Code, rec.Body.String())
+		}
+		var root map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &root); err != nil {
+			t.Fatalf("%s: response not JSON: %v body=%q", in, err, rec.Body.String())
+		}
+		rt, _ := root["data"].(map[string]any)["resultType"].(string)
+		if rt != "streams" {
+			t.Fatalf("%s: resultType=%q want streams", in, rt)
+		}
+	}
+}
+
+func TestNewHandler_LokiRouting_NativeDoublePrefix(t *testing.T) {
+	// Native Loki on /api/v1: Grafana double-prefix /loki/loki/... must become /api/v1/...
+	var gotPath string
+	loki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"streams","result":[]}}`))
+	}))
+	defer loki.Close()
+
+	cfg := config.Config{MaxResponseBytes: 1 << 20, LokiEnabled: true, LokiURL: loki.URL}
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/loki/loki/api/v1/query_range", nil)
+	h.ServeHTTP(rec, req)
+	if gotPath != "/api/v1/query_range" {
+		t.Fatalf("expected upstream /api/v1/query_range, got %q", gotPath)
 	}
 }
 

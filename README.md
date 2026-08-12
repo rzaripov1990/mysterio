@@ -33,7 +33,8 @@ Grafana ──HTTP(S)──▶ mysterio ──HTTP(S)──▶ Loki / Elasticsea
 
 ```bash
 export LOKI_ENABLED=true
-export LOKI_URL=http://loki-dev.example
+# Include /loki when the upstream gateway serves under that prefix.
+export LOKI_URL=https://loki-dev.example/loki
 export RULES_PATH=./configs/rules.yaml
 export PORT=:8080
 
@@ -56,7 +57,7 @@ stack below, whose defaults leave both `false`.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LOKI_ENABLED` | `false` | Enable the `/loki` proxy route |
-| `LOKI_URL` | — | Upstream Loki base URL; required if `LOKI_ENABLED=true` |
+| `LOKI_URL` | — | Upstream Loki base URL; required if `LOKI_ENABLED=true`. Use `https://host/loki` when Loki is behind a `/loki` gateway prefix |
 | `ELASTIC_ENABLED` | `false` | Enable the `/elastic` proxy route |
 | `ELASTIC_URL` | — | Upstream Elasticsearch base URL; required if `ELASTIC_ENABLED=true` |
 | `PORT` | `:8080` | Listen address |
@@ -76,12 +77,41 @@ text).
 
 ## Routing
 
-- `/loki/*` → forwarded to `LOKI_URL` (prefix stripped)
+- `/loki/*` → forwarded to `LOKI_URL` (mysterio mount prefix `/loki` is
+  stripped, then the upstream path is normalized — see below)
 - `/elastic/*` → forwarded to `ELASTIC_URL` (prefix stripped); response
   masking is applied only to `_search`/`_msearch` responses — other
   Elasticsearch endpoints (`_mapping`, `_field_caps`, index listings) pass
   through unmodified.
 - `/healthz` → `ok`
+
+### Loki path prefixes (Grafana vs upstream)
+
+Two different `/loki` prefixes are easy to confuse:
+
+| Where | Example | Meaning |
+| --- | --- | --- |
+| **Grafana datasource URL** | `http://mysterio:8080/loki` | Route into mysterio (do **not** point Grafana at Loki directly) |
+| **`LOKI_URL`** | `https://loki.example/loki` | Upstream Loki/gateway base URL |
+
+Grafana may call either `/loki/api/v1/...` or `/loki/loki/api/v1/...`
+(depends on Grafana version and whether the datasource URL already ends
+with `/loki`). mysterio normalizes both to the correct upstream path:
+
+- `LOKI_URL=https://host/loki` (gateway with `/loki` prefix) → upstream
+  `/loki/api/v1/...`
+- `LOKI_URL=http://loki:3100` (native Loki on `/api/v1`) → upstream
+  `/api/v1/...`
+
+**Symptom of a wrong `LOKI_URL`:** Grafana shows
+`Status: 500. Message: unknown result type:` while the same LogQL works
+against Loki without mysterio. mysterio is usually returning plain-text
+`404 page not found` from the gateway (Grafana cannot parse a Loki
+`resultType` out of that body). Fix: set `LOKI_URL` to include the
+gateway prefix, e.g. `https://loki.example/loki`.
+
+Grafana datasource URL stays `http://mysterio:8080/loki` either way —
+only `LOKI_URL` on the mysterio side needs the upstream prefix.
 
 ## Masking test UI
 
@@ -106,7 +136,8 @@ inside the Grafana container).
 
 ```bash
 export LOKI_ENABLED=true
-export LOKI_URL=https://loki-prod.example
+# Gateway with /loki prefix — native Loki would be http://loki:3100 (no path).
+export LOKI_URL=https://loki-prod.example/loki
 ./run.sh
 # or: docker compose up -d --build
 ```
@@ -125,14 +156,14 @@ before running `./run.sh` (see `docker-compose.yml`), then add a Grafana
 Elasticsearch datasource pointed at `http://mysterio:8080/elastic`.
 
 Variables (examples):
-- `namespace` (`k8s_namespace`) — custom: `bank`, `digital`, `infra`, `actions`
+- `namespace` (`k8s_namespace`) — custom list of namespaces
 - `k8s_app` — `label_values({k8s_namespace_name=~"$namespace"}, k8s_app)`
-- `find` — textbox for line filter `|= "$find"` (empty = all lines)
+- `query1` / `or` / `query2` / `query3` — textbox filters (default `.*`)
 
 Panel LogQL:
 
 ```logql
-{k8s_cluster="kuber-prod", k8s_namespace_name="$namespace", k8s_app="$k8s_app"} |= "$find"
+{k8s_namespace_name="$namespace", k8s_app=~"$k8s_app"} |~ "$query1|$or" |~ "$query2" |~ "$query3"
 ```
 
 If Loki requires Basic Auth, add it in Grafana → Data sources → Loki (passed through).

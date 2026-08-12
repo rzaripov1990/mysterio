@@ -97,7 +97,7 @@ regex:
   # ФИО: строка, объект {KZ,RU,EN} или обёртка {"value":..,"type":..} —
   # значение маскируется целиком. [^}]* охватывает любой набор полей объекта.
   - name: fullName
-    pattern: '"(FULLNAME|fullName)"\s*:\s*(?:\{[^}]*\}|"[^"]*")'
+    pattern: '"(FULLNAME|fullName|FULL_NAME|MANAGER|MANAGER_FULL_NAME|managerFullName|spouseName)"\s*:\s*(?:\{[^}]*\}|"[^"]*")'
     replace: '"${1}":"***"'
 
   # Учётные данные в form-urlencoded теле (эндпоинт выдачи токена).
