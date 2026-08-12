@@ -102,6 +102,53 @@ func TestNewHandler_LokiRouting_GatewayPrefix(t *testing.T) {
 	}
 }
 
+func TestNewHandler_LokiQueryRange_MaskedPreservesResultType(t *testing.T) {
+	loki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Chunked-style response from Loki (no Content-Length).
+		_, _ = w.Write([]byte(`{
+		  "status":"success",
+		  "data":{
+		    "resultType":"streams",
+		    "result":[{
+		      "stream":{"k8s_app":"a2a/x"},
+		      "values":[["1","{\"iin\":\"123456789012\",\"ip\":\"10.120.34.195\"}"]]
+		    }]
+		  }
+		}`))
+	}))
+	defer loki.Close()
+
+	cfg := config.Config{
+		MaxResponseBytes: 1 << 20,
+		LokiEnabled:      true,
+		LokiURL:          loki.URL + "/loki",
+	}
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/loki/loki/api/v1/query_range", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if te := rec.Header().Get("Transfer-Encoding"); te != "" {
+		t.Fatalf("Transfer-Encoding should be cleared after buffering, got %q", te)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &root); err != nil {
+		t.Fatalf("client must receive valid JSON: %v body=%q", err, rec.Body.String())
+	}
+	data, _ := root["data"].(map[string]any)
+	if data["resultType"] != "streams" {
+		t.Fatalf("resultType=%v want streams (Grafana shows unknown result type if missing)", data["resultType"])
+	}
+}
+
 func TestNewHandler_LokiRouting_NoURLPath_KeepsDoublePrefix(t *testing.T) {
 	// LOKI_URL without /loki path + Grafana double-prefix (datasource ends with /loki):
 	// /loki/loki/api → strip → /loki/api — must stay /loki/api for gateways (do not

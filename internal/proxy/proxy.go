@@ -203,14 +203,22 @@ func modifyResponseBody(resp *http.Response, cfg config.Config, mask func([]byte
 	setBody := func(b []byte) {
 		resp.Body = io.NopCloser(bytes.NewReader(b))
 		resp.Header.Del("Content-Encoding")
+		// Upstream often sends Transfer-Encoding: chunked; after we buffer the
+		// body we must clear it or clients can see an empty/corrupt payload
+		// (Grafana then reports "unknown result type: ").
+		resp.Header.Del("Transfer-Encoding")
+		resp.Trailer = nil
 		resp.ContentLength = int64(len(b))
 		resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
 	}
 
 	if int64(len(body)) > cfg.MaxResponseBytes {
-		slog.Warn("response too large, skip masking", "size", len(body))
-		setBody(body)
-		return nil
+		// Body is already truncated by LimitReader — sending it breaks JSON
+		// clients. Fail closed so ReverseProxy returns 502 instead of a
+		// partial payload that Grafana surfaces as "unknown result type: ".
+		slog.Warn("response too large for masking buffer", "size", len(body), "limit", cfg.MaxResponseBytes)
+		resp.Body = io.NopCloser(bytes.NewReader(nil))
+		return fmt.Errorf("response exceeds MAX_RESPONSE_BYTES (%d)", cfg.MaxResponseBytes)
 	}
 
 	out, err := mask(body)
