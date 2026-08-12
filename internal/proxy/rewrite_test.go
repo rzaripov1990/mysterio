@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -63,6 +64,19 @@ json_keys:
 	}
 	if lineObj["iin"] != "************" {
 		t.Fatalf("iin not masked: %s", line)
+	}
+	// Grafana is sensitive to a missing/late resultType after remarshal.
+	if data["resultType"] != "streams" {
+		t.Fatalf("resultType=%v want streams", data["resultType"])
+	}
+	if !bytes.Contains(out, []byte(`"resultType":"streams"`)) {
+		t.Fatalf("masked body missing resultType literal: %s", out)
+	}
+	// resultType must appear before the result array in the serialized form.
+	rtAt := bytes.Index(out, []byte(`"resultType"`))
+	resAt := bytes.Index(out, []byte(`"result":[`))
+	if rtAt < 0 || resAt < 0 || rtAt > resAt {
+		t.Fatalf("resultType must be emitted before result array (rt=%d result=%d) body=%s", rtAt, resAt, out)
 	}
 }
 
