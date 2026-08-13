@@ -2,22 +2,26 @@ package proxy
 
 import (
 	"encoding/json"
+	"strings"
 
 	"mysterio/internal/masker"
 )
 
-// MaskElasticResponseBody masks _source fields (by JSON key, same rules
-// used for Loki) in Elasticsearch _search and _msearch response bodies.
-// Returns (body, changed, err). Shapes without a "hits.hits" array
-// (either at the top level or inside each "responses[]" entry for
-// _msearch) are returned unchanged — callers are expected to only invoke
-// this for _search/_msearch responses in the first place.
-func MaskElasticResponseBody(body []byte, m *masker.Masker) ([]byte, bool, error) {
+// MaskElasticResponseBody masks _source in Elasticsearch _search/_msearch bodies.
+//
+// messageField mirrors Grafana's "Message field name":
+//   - "" (default): whole _source is the log message — json_keys on the object,
+//     then Apply (regex) on every string field;
+//   - "log" (etc.): json_keys on the object, Apply only on that field.
+//
+// Returns (body, changed, err). Shapes without hits.hits are unchanged.
+func MaskElasticResponseBody(body []byte, m *masker.Masker, messageField string) ([]byte, bool, error) {
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
 		return body, false, err
 	}
 
+	messageField = strings.TrimSpace(messageField)
 	changed := false
 	if responses, ok := root["responses"].([]any); ok {
 		for _, r := range responses {
@@ -25,12 +29,12 @@ func MaskElasticResponseBody(body []byte, m *masker.Masker) ([]byte, bool, error
 			if !ok {
 				continue
 			}
-			if maskElasticHits(resp, m) {
+			if maskElasticHits(resp, m, messageField) {
 				changed = true
 			}
 		}
 	} else {
-		changed = maskElasticHits(root, m)
+		changed = maskElasticHits(root, m, messageField)
 	}
 
 	if !changed {
@@ -43,7 +47,7 @@ func MaskElasticResponseBody(body []byte, m *masker.Masker) ([]byte, bool, error
 	return out, true, nil
 }
 
-func maskElasticHits(resp map[string]any, m *masker.Masker) bool {
+func maskElasticHits(resp map[string]any, m *masker.Masker, messageField string) bool {
 	hitsWrap, ok := resp["hits"].(map[string]any)
 	if !ok {
 		return false
@@ -62,9 +66,37 @@ func maskElasticHits(resp map[string]any, m *masker.Masker) bool {
 		if !ok {
 			continue
 		}
-		if m.WalkAndMask(src) {
+		if maskElasticSource(src, m, messageField) {
 			changed = true
 		}
+	}
+	return changed
+}
+
+func maskElasticSource(src map[string]any, m *masker.Masker, messageField string) bool {
+	// Always mask structured json_keys / embedded JSON in the document.
+	changed := m.WalkAndMask(src)
+
+	if messageField == "" {
+		// Grafana default: message is the whole _source — Apply on all strings.
+		if m.ApplyStrings(src) {
+			changed = true
+		}
+		return changed
+	}
+
+	raw, ok := src[messageField]
+	if !ok {
+		return changed
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return changed
+	}
+	masked := m.Apply(s)
+	if masked != s {
+		src[messageField] = masked
+		changed = true
 	}
 	return changed
 }

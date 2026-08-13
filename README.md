@@ -60,6 +60,7 @@ stack below, whose defaults leave both `false`.
 | `LOKI_URL` | — | Upstream Loki base URL; required if `LOKI_ENABLED=true`. Use `https://host/loki` when Loki is behind a `/loki` gateway prefix |
 | `ELASTIC_ENABLED` | `false` | Enable the `/elastic` proxy route |
 | `ELASTIC_URL` | — | Upstream Elasticsearch base URL; required if `ELASTIC_ENABLED=true` |
+| `ELASTIC_MESSAGE_FIELD` | `` (empty) | Grafana "Message field name". Empty = whole `_source` (Grafana default); set to `log` when the datasource uses Message field name `log` |
 | `PORT` | `:8080` | Listen address |
 | `MAX_RESPONSE_BYTES` | `33554432` | Skip masking above this size (shared by both backends) |
 | `TEST_ME_ENABLED` | `false` | Enable the `/test-me` masking-preview UI |
@@ -71,9 +72,8 @@ startup** — there is no hot-reload. To change rules, edit the file and
 restart the process (or `docker compose restart mysterio` — no image rebuild
 needed if the file is bind-mounted, see below). The same rules apply to both
 Loki and Elasticsearch: `json_keys` rules mask matching keys recursively in
-both; the `regex` rules apply only to Loki log lines (Elasticsearch
-`_source` fields are masked structurally by JSON key, not by regex over raw
-text).
+both; the `regex` rules apply to Loki log lines and to string fields inside
+Elasticsearch `_source` (e.g. Grafana's message field `log`).
 
 ## Routing
 
@@ -181,8 +181,9 @@ Then set Grafana datasource to `http://host.docker.internal:9999/loki` (not `loc
 - **JSON logs (Loki):** mask by key name (recursive), e.g. `iin` / `biin`;
   and regex over the (re)serialized line for format-based or non-JSON
   matches (e-mail, phone, JWT, SQL/logfmt text).
-- **Elasticsearch `_search`/`_msearch`:** mask by key name only, walking
-  each hit's `_source` — no regex pass.
+- **Elasticsearch `_search`/`_msearch`:** mask by key name in `_source`, and
+  run the same Apply path (embedded JSON + regex) on string fields such as
+  Grafana's message field (`log` / `message`).
 
 Rules live in the file at `RULES_PATH` (`configs/rules.yaml` by default in
 this repo and in the Docker image); restart the process after editing — no

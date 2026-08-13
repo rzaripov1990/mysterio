@@ -157,7 +157,7 @@ func modifyElasticResponse(resp *http.Response, cfg config.Config, m *masker.Mas
 		return nil
 	}
 	return modifyResponseBody(resp, cfg, func(body []byte) ([]byte, error) {
-		out, _, err := MaskElasticResponseBody(body, m)
+		out, _, err := MaskElasticResponseBody(body, m, cfg.ElasticMessageField)
 		if err != nil {
 			return body, err
 		}

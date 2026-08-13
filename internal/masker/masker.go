@@ -74,16 +74,53 @@ func (m *Masker) Apply(line string) string {
 	return m.applyTextRules(line)
 }
 
-// WalkAndMask recursively masks JSON keys in v (a decoded JSON value —
-// map[string]any, []any, or scalar) in place, using the same json_keys
-// rules as Apply. Unlike Apply, it does not run text/regex rules — callers
-// pass already-decoded structured data, not a raw log line.
+// WalkAndMask recursively masks a decoded JSON value in place using json_keys
+// (by name) and maskEmbeddedJSON for string values that contain JSON. It does
+// not run full Apply/regex on every string — callers that need log-line regex
+// (Elasticsearch message field) use Apply / ApplyStrings separately.
 // Returns whether anything was changed.
 func (m *Masker) WalkAndMask(v any) bool {
 	before, _ := json.Marshal(v)
 	m.walk(v)
 	after, _ := json.Marshal(v)
 	return string(before) != string(after)
+}
+
+// ApplyStrings runs Apply on every string leaf in v (map/array), in place.
+// Used when Elasticsearch message field is empty (whole _source is the message).
+func (m *Masker) ApplyStrings(v any) bool {
+	changed := false
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if s, ok := val.(string); ok {
+				masked := m.Apply(s)
+				if masked != s {
+					t[k] = masked
+					changed = true
+				}
+				continue
+			}
+			if m.ApplyStrings(val) {
+				changed = true
+			}
+		}
+	case []any:
+		for i, el := range t {
+			if s, ok := el.(string); ok {
+				masked := m.Apply(s)
+				if masked != s {
+					t[i] = masked
+					changed = true
+				}
+				continue
+			}
+			if m.ApplyStrings(el) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 func (m *Masker) applyTextRules(line string) string {
@@ -133,20 +170,20 @@ func (m *Masker) walk(v any) {
 				}
 			}
 			if s, ok := val.(string); ok {
-				if masked, changed := m.maskEmbeddedJSON(s); changed {
+				if masked, ch := m.maskEmbeddedJSON(s); ch {
 					t[k] = masked
-					continue
 				}
+				continue
 			}
 			m.walk(val)
 		}
 	case []any:
 		for i, el := range t {
 			if s, ok := el.(string); ok {
-				if masked, changed := m.maskEmbeddedJSON(s); changed {
+				if masked, ch := m.maskEmbeddedJSON(s); ch {
 					t[i] = masked
-					continue
 				}
+				continue
 			}
 			m.walk(el)
 		}

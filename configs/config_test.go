@@ -66,7 +66,7 @@ func clearBackendEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"LOKI_ENABLED", "LOKI_URL",
-		"ELASTIC_ENABLED", "ELASTIC_URL",
+		"ELASTIC_ENABLED", "ELASTIC_URL", "ELASTIC_MESSAGE_FIELD",
 		"MAX_RESPONSE_BYTES",
 		"TEST_ME_ENABLED", "BASE_PATH",
 		"RULES_PATH",
@@ -140,6 +140,24 @@ func TestLoad_BothEnabled_Success(t *testing.T) {
 	}
 	if cfg.ElasticURL != "http://elastic:9200" {
 		t.Fatalf("unexpected elastic url: %+v", cfg)
+	}
+	if cfg.ElasticMessageField != "" {
+		t.Fatalf("expected empty ElasticMessageField by default, got %q", cfg.ElasticMessageField)
+	}
+}
+
+func TestLoad_ElasticMessageField(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("ELASTIC_ENABLED", "true")
+	t.Setenv("ELASTIC_URL", "http://elastic:9200")
+	t.Setenv("ELASTIC_MESSAGE_FIELD", "log")
+	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ElasticMessageField != "log" {
+		t.Fatalf("ElasticMessageField=%q want log", cfg.ElasticMessageField)
 	}
 }
 

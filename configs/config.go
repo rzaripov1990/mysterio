@@ -21,6 +21,10 @@ type Config struct {
 
 	ElasticEnabled bool
 	ElasticURL     string
+	// ElasticMessageField is Grafana's "Message field name" for Elasticsearch
+	// logs. Empty (default) means the whole _source document is the message;
+	// set to e.g. "log" when the datasource Message field name is "log".
+	ElasticMessageField string
 
 	TestMeEnabled bool
 	BasePath      string
@@ -83,6 +87,7 @@ func Load() (Config, error) {
 		if _, err := url.Parse(cfg.ElasticURL); err != nil {
 			return Config{}, fmt.Errorf("ELASTIC_URL: %w", err)
 		}
+		cfg.ElasticMessageField = os.Getenv("ELASTIC_MESSAGE_FIELD")
 	}
 
 	cfg.TestMeEnabled = getenvBool("TEST_ME_ENABLED")
