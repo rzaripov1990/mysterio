@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	config "mysterio/configs"
@@ -288,5 +289,36 @@ func TestNewHandler_TestMeEnabled_ServesPage(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 when TestMeEnabled=true, got %d", rec.Code)
+	}
+}
+
+func TestNewHandler_TestMeEnabled_BasePath_IngressRewrite(t *testing.T) {
+	cfg := config.Config{
+		MaxResponseBytes: 1 << 20,
+		LokiEnabled:      true,
+		LokiURL:          "http://127.0.0.1:1",
+		TestMeEnabled:    true,
+		BasePath:         "/mysterio",
+	}
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on /test-me (path after ingress rewrite), got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "/mysterio/test-me/vendor/") {
+		t.Fatalf("expected HTML to use public BASE_PATH, got: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on prefixed path (ingress already stripped it), got %d", rec.Code)
 	}
 }

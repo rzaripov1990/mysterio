@@ -66,7 +66,7 @@ stack below, whose defaults leave both `false`.
 | `MAX_RESPONSE_BYTES` | `33554432` | Skip masking above this size (shared by both backends) |
 | `TEST_ME_ENABLED` | `false` | Enable the `/test-me` masking-preview UI |
 | `MASK_HMAC_KEY` | — | Raw HMAC key (min 32 bytes). Required if any rule uses `{hmac}` |
-| `BASE_PATH` | `` (root) | Path prefix for `/test-me` only (e.g. `/mysterio`); does not affect `/loki`, `/elastic`, `/healthz` |
+| `BASE_PATH` | `` (root) | Public URL prefix for `/test-me` HTML/JS only (e.g. `/mysterio`). The process always listens on `/test-me`; the reverse proxy must strip the prefix, same as `/loki` / `/elastic` |
 | `RULES_PATH` | — | Path to the masking rules YAML file; required, loaded once at startup |
 
 Masking rules are loaded from the file at `RULES_PATH` **once, at process
@@ -117,8 +117,11 @@ gateway needs it) — do **not** change the Grafana datasource URL.
 
 ## Masking test UI
 
-Set `TEST_ME_ENABLED=true` to expose `/test-me` (or `{BASE_PATH}/test-me` if
-`BASE_PATH` is set): a page to paste a candidate `rules.yaml` and a log line,
+Set `TEST_ME_ENABLED=true` to expose `/test-me`. If the public URL is
+`https://host/mysterio/test-me` behind an ingress that rewrites
+`/mysterio(/|$)(.*)` → `/$2`, set `BASE_PATH=/mysterio` so the page's
+scripts and `fetch()` calls use `/mysterio/test-me/...`. The process still
+listens on `/test-me`. A page to paste a candidate `rules.yaml` and a log line,
 and preview the masked result. The rules editor is prefilled with the
 service's actual embedded rules, but **edits there are never applied to the
 running service** — each preview parses the submitted rules fresh and

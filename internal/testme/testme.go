@@ -24,14 +24,17 @@ const maxRequestBytes = 1 << 20 // 1 MiB
 
 var allStars = regexp.MustCompile(`^\*+$`)
 
-// NewHandler returns an http.Handler serving the masking-test UI and its
-// API under basePath (e.g. "" for root, or "/mysterio"):
-//   - GET  {basePath}/test-me           the HTML page
-//   - GET  {basePath}/test-me/api/rules the embedded rules.yaml, verbatim
-//   - POST {basePath}/test-me/api/mask  masks a log line against rules
-//     supplied in the request body (not the service's live rules)
-//   - POST {basePath}/test-me/api/hmac  hashes a value with the process key
-//   - GET  {basePath}/test-me/vendor/*  vendored CodeMirror assets (no CDN)
+// NewHandler returns an http.Handler serving the masking-test UI and its API
+// on /test-me. basePath is the public URL prefix the browser uses (e.g.
+// "/mysterio" behind an ingress that strips it); it is baked into HTML/JS
+// only. Routes always listen on /test-me so a reverse-proxy rewrite
+// /mysterio(/|$)(.*) → /$2 reaches the handler, same as /loki and /elastic:
+//   - GET  /test-me           the HTML page
+//   - GET  /test-me/api/rules the embedded rules.yaml, verbatim
+//   - POST /test-me/api/mask  masks a log line against rules supplied in
+//     the request body (not the service's live rules)
+//   - POST /test-me/api/hmac  hashes a value with the process key
+//   - GET  /test-me/vendor/*  vendored CodeMirror assets (no CDN)
 func NewHandler(basePath string, rulesYAML []byte, tok *token.Tokenizer) http.Handler {
 	tmpl := template.Must(template.New("page").Parse(pageTemplate))
 	var buf bytes.Buffer
@@ -51,25 +54,25 @@ func NewHandler(basePath string, rulesYAML []byte, tok *token.Tokenizer) http.Ha
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET "+basePath+"/test-me", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /test-me", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(pageHTML)
 	})
 
-	mux.HandleFunc("GET "+basePath+"/test-me/api/rules", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /test-me/api/rules", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(rulesYAML)
 	})
 
-	mux.HandleFunc("POST "+basePath+"/test-me/api/mask", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /test-me/api/mask", func(w http.ResponseWriter, r *http.Request) {
 		handleMask(w, r, tok)
 	})
-	mux.HandleFunc("POST "+basePath+"/test-me/api/hmac", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /test-me/api/hmac", func(w http.ResponseWriter, r *http.Request) {
 		handleHMAC(w, r, tok)
 	})
 
-	mux.Handle("GET "+basePath+"/test-me/vendor/",
-		http.StripPrefix(basePath+"/test-me/vendor/", http.FileServerFS(vendorSub)))
+	mux.Handle("GET /test-me/vendor/",
+		http.StripPrefix("/test-me/vendor/", http.FileServerFS(vendorSub)))
 
 	return mux
 }

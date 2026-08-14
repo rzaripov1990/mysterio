@@ -52,8 +52,8 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 			tok = token.New(cfg.MaskHMACKey)
 		}
 		tm := testme.NewHandler(cfg.BasePath, cfg.RawRulesYAML, tok)
-		mux.Handle(cfg.BasePath+"/test-me", tm)
-		mux.Handle(cfg.BasePath+"/test-me/", tm)
+		mux.Handle("/test-me", tm)
+		mux.Handle("/test-me/", tm)
 	}
 
 	return withLogging(mux), nil

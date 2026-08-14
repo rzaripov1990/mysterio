@@ -119,21 +119,21 @@ func TestNewHandler_Mask_EmptyLog(t *testing.T) {
 	}
 }
 
-func TestNewHandler_BasePath_PrefixesRoutes(t *testing.T) {
+func TestNewHandler_BasePath_ListenPathUnprefixed(t *testing.T) {
 	h := testme.NewHandler("/mysterio", []byte(testRulesYAML), nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
+	req := httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected root /test-me to 404 when basePath is set, got %d", rec.Code)
+		t.Fatalf("expected prefixed path to 404 (ingress already stripped it), got %d", rec.Code)
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
+	req = httptest.NewRequest(http.MethodGet, "/test-me", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected /mysterio/test-me to serve the page, got %d", rec.Code)
+		t.Fatalf("expected /test-me to serve the page, got %d", rec.Code)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestNewHandler_Page_UsesBasePathForVendorAssets(t *testing.T) {
 	h := testme.NewHandler("/mysterio", []byte(testRulesYAML), nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -168,10 +168,10 @@ func TestNewHandler_Page_UsesBasePathForVendorAssets(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/mysterio/test-me/vendor/codemirror.min.js", nil)
+	req = httptest.NewRequest(http.MethodGet, "/test-me/vendor/codemirror.min.js", nil)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected vendor asset to be served under basePath, got %d", rec.Code)
+		t.Fatalf("expected vendor asset to be served at /test-me/vendor/, got %d", rec.Code)
 	}
 }
 
