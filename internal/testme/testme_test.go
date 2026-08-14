@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"mysterio/internal/testme"
+	"mysterio/internal/token"
 )
 
 const testRulesYAML = `
@@ -19,7 +20,7 @@ json_keys:
 `
 
 func TestNewHandler_ServesPage(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
 	h.ServeHTTP(rec, req)
@@ -34,7 +35,7 @@ func TestNewHandler_ServesPage(t *testing.T) {
 }
 
 func TestNewHandler_RulesEndpoint_ReturnsEmbeddedBytes(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test-me/api/rules", nil)
 	h.ServeHTTP(rec, req)
@@ -48,7 +49,7 @@ func TestNewHandler_RulesEndpoint_ReturnsEmbeddedBytes(t *testing.T) {
 }
 
 func TestNewHandler_Mask_ValidRules(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 	body, _ := json.Marshal(map[string]string{
 		"rules": testRulesYAML,
 		"log":   `{"iin":"999888777666"}`,
@@ -72,7 +73,7 @@ func TestNewHandler_Mask_ValidRules(t *testing.T) {
 }
 
 func TestNewHandler_Mask_InvalidRulesYAML(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 	body, _ := json.Marshal(map[string]string{
 		"rules": "regex:\n  - name: bad\n    pattern: \"(\"\n    replace: x",
 		"log":   "hello",
@@ -96,7 +97,7 @@ func TestNewHandler_Mask_InvalidRulesYAML(t *testing.T) {
 }
 
 func TestNewHandler_Mask_InvalidRequestJSON(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/test-me/api/mask", strings.NewReader("not json"))
 	h.ServeHTTP(rec, req)
@@ -107,7 +108,7 @@ func TestNewHandler_Mask_InvalidRequestJSON(t *testing.T) {
 }
 
 func TestNewHandler_Mask_EmptyLog(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 	body, _ := json.Marshal(map[string]string{"rules": testRulesYAML, "log": ""})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/test-me/api/mask", bytes.NewReader(body))
@@ -119,7 +120,7 @@ func TestNewHandler_Mask_EmptyLog(t *testing.T) {
 }
 
 func TestNewHandler_BasePath_PrefixesRoutes(t *testing.T) {
-	h := testme.NewHandler("/mysterio", []byte(testRulesYAML))
+	h := testme.NewHandler("/mysterio", []byte(testRulesYAML), nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
@@ -137,7 +138,7 @@ func TestNewHandler_BasePath_PrefixesRoutes(t *testing.T) {
 }
 
 func TestNewHandler_VendorAssets_Served(t *testing.T) {
-	h := testme.NewHandler("", []byte(testRulesYAML))
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
 
 	for _, name := range []string{"codemirror.min.js", "codemirror.min.css", "yaml.min.js"} {
 		rec := httptest.NewRecorder()
@@ -153,7 +154,7 @@ func TestNewHandler_VendorAssets_Served(t *testing.T) {
 }
 
 func TestNewHandler_Page_UsesBasePathForVendorAssets(t *testing.T) {
-	h := testme.NewHandler("/mysterio", []byte(testRulesYAML))
+	h := testme.NewHandler("/mysterio", []byte(testRulesYAML), nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/mysterio/test-me", nil)
@@ -171,5 +172,105 @@ func TestNewHandler_Page_UsesBasePathForVendorAssets(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected vendor asset to be served under basePath, got %d", rec.Code)
+	}
+}
+
+func TestHMAC_Lookup(t *testing.T) {
+	tok := token.New([]byte("0123456789abcdef0123456789abcdef"))
+	h := testme.NewHandler("", []byte(testRulesYAML), tok)
+	body, _ := json.Marshal(map[string]string{"value": "890501402951", "normalize": "digits"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/test-me/api/hmac", bytes.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), `~nAqddoqkCK8`) {
+		t.Fatal(rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "0123456789abcdef") {
+		t.Fatal("key leaked")
+	}
+}
+
+func TestHMAC_NoTokenizer_503(t *testing.T) {
+	h := testme.NewHandler("", []byte(testRulesYAML), nil)
+	body, _ := json.Marshal(map[string]string{"value": "890501402951", "normalize": "digits"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/test-me/api/hmac", bytes.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != 503 {
+		t.Fatalf("got %d", rec.Code)
+	}
+}
+
+func TestMask_HMACUsesServerTokenizer(t *testing.T) {
+	tok := token.New([]byte("0123456789abcdef0123456789abcdef"))
+	hmacRules := `
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+    normalize: digits
+`
+	h := testme.NewHandler("", []byte(hmacRules), tok)
+	body, _ := json.Marshal(map[string]string{"rules": hmacRules, "log": `{"iin":"890501402951"}`})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/test-me/api/mask", bytes.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `~nAqddoqkCK8`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestMask_HMACNoTokenizer_400(t *testing.T) {
+	hmacRules := `
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+`
+	h := testme.NewHandler("", []byte(hmacRules), nil)
+	body, _ := json.Marshal(map[string]string{"rules": hmacRules, "log": `{"iin":"890501402951"}`})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/test-me/api/mask", bytes.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestHMAC_EmptyValue_400(t *testing.T) {
+	tok := token.New([]byte("0123456789abcdef0123456789abcdef"))
+	h := testme.NewHandler("", []byte(testRulesYAML), tok)
+	body, _ := json.Marshal(map[string]string{"value": "", "normalize": "digits"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/test-me/api/hmac", bytes.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("got %d", rec.Code)
+	}
+}
+
+func TestHMAC_Asterisks_ReturnsStars(t *testing.T) {
+	tok := token.New([]byte("0123456789abcdef0123456789abcdef"))
+	h := testme.NewHandler("", []byte(testRulesYAML), tok)
+	body, _ := json.Marshal(map[string]string{"value": "***", "normalize": "none"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/test-me/api/hmac", bytes.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"token":"***"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPage_DoesNotEmbedKey(t *testing.T) {
+	tok := token.New([]byte("0123456789abcdef0123456789abcdef"))
+	h := testme.NewHandler("", []byte(testRulesYAML), tok)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test-me", nil)
+	h.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "0123456789abcdef") {
+		t.Fatal("key leaked into HTML")
 	}
 }

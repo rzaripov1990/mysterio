@@ -8,6 +8,7 @@ import (
 	config "mysterio/configs"
 	"mysterio/internal/masker"
 	"mysterio/internal/proxy"
+	"mysterio/internal/token"
 )
 
 func elasticTestMasker(t *testing.T) *masker.Masker {
@@ -21,7 +22,11 @@ json_keys:
 	if err != nil {
 		t.Fatal(err)
 	}
-	return masker.New(rules)
+	m, err := masker.New(rules, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 func elasticRegexMasker(t *testing.T) *masker.Masker {
@@ -39,7 +44,11 @@ regex:
 	if err != nil {
 		t.Fatal(err)
 	}
-	return masker.New(rules)
+	m, err := masker.New(rules, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 func TestMaskElasticResponseBody_Search(t *testing.T) {
@@ -194,5 +203,35 @@ func TestMaskElasticResponseBody_NoHitsPassthrough(t *testing.T) {
 	}
 	if string(out) != string(in) {
 		t.Fatal("body rewritten unexpectedly")
+	}
+}
+
+func TestMaskElasticResponseBody_NumericIIN_HMAC(t *testing.T) {
+	rules, err := config.LoadRules([]byte(`
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+    normalize: digits
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := token.New([]byte("0123456789abcdef0123456789abcdef"))
+	m, err := masker.New(rules, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := []byte(`{"hits":{"hits":[{"_source":{"iin":890501402951}}]}}`)
+	out, changed, err := proxy.MaskElasticResponseBody(in, m, "")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if !strings.Contains(string(out), `~nAqddoqkCK8`) {
+		t.Fatalf("got %s", out)
+	}
+	loki := m.Apply(`{"iin":"890501402951"}`)
+	if !strings.Contains(loki, `~nAqddoqkCK8`) {
+		t.Fatalf("loki %s", loki)
 	}
 }

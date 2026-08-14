@@ -22,7 +22,16 @@ json_keys:
 	if err != nil {
 		t.Fatal(err)
 	}
-	return masker.New(rules)
+	return mustMasker(t, rules)
+}
+
+func mustMasker(t *testing.T, rules config.Rules) *masker.Masker {
+	t.Helper()
+	m, err := masker.New(rules, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 func TestNewHandler_NoBackendEnabled_Error(t *testing.T) {

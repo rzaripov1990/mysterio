@@ -109,7 +109,18 @@
     word-break: break-word;
     min-height: 80px;
   }
-  pre.result.error { color: var(--error); border-color: var(--error); }
+  input.mono, select.mono {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--editor-bg);
+    color: var(--fg);
+  }
+  .hmac-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 8px; }
+  .hmac-row .grow { flex: 1; min-width: 180px; }
+  .hmac-row button { margin-top: 0; }
+
 </style>
 </head>
 <body>
@@ -131,6 +142,30 @@
 
   <label style="margin-top:20px;">Result</label>
   <pre id="result" class="result mono"></pre>
+
+  <h1 style="margin-top:32px;">Lookup token for Grafana</h1>
+  {{if .HMACEnabled}}
+  <p class="note">Uses the server MASK_HMAC_KEY. Paste the token into Grafana as an exact match: |= "~…"</p>
+  <div class="hmac-row">
+    <div class="grow">
+      <label for="hmacValue">Value</label>
+      <input id="hmacValue" class="mono" placeholder="123456789098" spellcheck="false">
+    </div>
+    <div>
+      <label for="hmacNorm">normalize</label>
+      <select id="hmacNorm" class="mono">
+        <option value="none">none</option>
+        <option value="digits" selected>digits</option>
+        <option value="lower">lower</option>
+      </select>
+    </div>
+    <button id="hmacBtn" type="button">Hash</button>
+    <button id="hmacCopy" type="button">Copy</button>
+  </div>
+  <pre id="hmacResult" class="result mono"></pre>
+  {{else}}
+  <p class="note">MASK_HMAC_KEY is not set — token lookup is disabled.</p>
+  {{end}}
 
 <script src="{{.BasePath}}/test-me/vendor/codemirror.min.js"></script>
 <script src="{{.BasePath}}/test-me/vendor/yaml.min.js"></script>
@@ -182,6 +217,53 @@
         btn.disabled = false;
       });
   });
+
+  var hmacBtn = document.getElementById('hmacBtn');
+  if (hmacBtn) {
+    var hmacValue = document.getElementById('hmacValue');
+    var hmacNorm = document.getElementById('hmacNorm');
+    var hmacResult = document.getElementById('hmacResult');
+    var hmacCopy = document.getElementById('hmacCopy');
+    var lastToken = '';
+
+    hmacBtn.addEventListener('click', function () {
+      hmacBtn.disabled = true;
+      hmacResult.classList.remove('error');
+      hmacResult.textContent = 'Hashing...';
+      fetch(BASE + '/test-me/api/hmac', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: hmacValue.value, normalize: hmacNorm.value })
+      })
+        .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+        .then(function (res) {
+          if (res.status !== 200 || res.data.error) {
+            hmacResult.classList.add('error');
+            hmacResult.textContent = res.data.error || ('HTTP ' + res.status);
+            lastToken = '';
+          } else {
+            hmacResult.classList.remove('error');
+            lastToken = res.data.token || '';
+            hmacResult.textContent = lastToken;
+          }
+        })
+        .catch(function (err) {
+          hmacResult.classList.add('error');
+          hmacResult.textContent = 'Request failed: ' + err;
+          lastToken = '';
+        })
+        .finally(function () {
+          hmacBtn.disabled = false;
+        });
+    });
+
+    hmacCopy.addEventListener('click', function () {
+      if (!lastToken) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(lastToken);
+      }
+    });
+  }
 })();
 </script>
 </body>

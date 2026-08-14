@@ -4,54 +4,149 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	config "mysterio/configs"
+	"mysterio/internal/token"
+)
+
+var (
+	hmacPlaceholder = regexp.MustCompile(`\{hmac(?::\$(\d+))?\}`)
+	allStars        = regexp.MustCompile(`^\*+$`)
 )
 
 type Masker struct {
-	keyReplace map[string]string
-	regex      []config.RegexRule
-	// keyPatterns mask "key":"value" (and escaped \"key\":\"value\") in non-JSON text
+	tok         *token.Tokenizer
+	keyReplace  map[string]keyRule
+	regex       []compiledRegex
 	keyPatterns []keyPattern
 }
 
-type keyPattern struct {
-	re      *regexp.Regexp
-	replace string
+type keyRule struct {
+	repl replacement
+	norm string
 }
 
-func New(rules config.Rules) *Masker {
+type keyPattern struct {
+	re     *regexp.Regexp
+	static string
+	hmac   bool
+	repl   replacement
+	norm   string
+	wrap   func(string) string
+}
+
+type compiledRegex struct {
+	re      *regexp.Regexp
+	repl    replacement
+	norm    string
+	escRe   *regexp.Regexp
+	escRepl replacement
+}
+
+type replacement struct {
+	raw   string
+	parts []replPart
+	hmac  bool
+}
+
+type replPart struct {
+	lit   string
+	hmac  bool
+	group int
+}
+
+func New(rules config.Rules, tok *token.Tokenizer) (*Masker, error) {
+	if config.RulesUseHMAC(rules) && tok == nil {
+		return nil, fmt.Errorf("MASK_HMAC_KEY is not set but rules use {hmac}")
+	}
 	m := &Masker{
-		keyReplace: make(map[string]string),
-		regex:      rules.Regex,
+		tok:        tok,
+		keyReplace: make(map[string]keyRule),
 	}
 	for _, r := range rules.JSONKeys {
+		repl := parseReplacement(r.Replace)
+		rule := keyRule{repl: repl, norm: r.Normalize}
 		for _, k := range r.Keys {
-			m.keyReplace[k] = r.Replace
-			m.keyPatterns = append(m.keyPatterns, buildKeyPatterns(k, r.Replace)...)
+			m.keyReplace[k] = rule
+			m.keyPatterns = append(m.keyPatterns, buildKeyPatterns(k, repl, r.Normalize)...)
 		}
 	}
-	return m
+	for _, r := range rules.Regex {
+		cr := compiledRegex{
+			re:   r.Regexp(),
+			repl: parseReplacement(r.Replace),
+			norm: r.Normalize,
+		}
+		escPattern := escapeJSONRegex(r.Pattern)
+		if escPattern != r.Pattern {
+			if ere, err := regexp.Compile(escPattern); err == nil {
+				cr.escRe = ere
+				cr.escRepl = parseReplacement(escapeJSONReplace(r.Replace))
+			}
+		}
+		m.regex = append(m.regex, cr)
+	}
+	return m, nil
 }
 
-func buildKeyPatterns(key, replace string) []keyPattern {
+func parseReplacement(s string) replacement {
+	matches := hmacPlaceholder.FindAllStringSubmatchIndex(s, -1)
+	if len(matches) == 0 {
+		return replacement{raw: s}
+	}
+	var parts []replPart
+	last := 0
+	for _, m := range matches {
+		if m[0] > last {
+			parts = append(parts, replPart{lit: s[last:m[0]]})
+		}
+		p := replPart{hmac: true}
+		if m[2] >= 0 {
+			p.group, _ = strconv.Atoi(s[m[2]:m[3]])
+		}
+		parts = append(parts, p)
+		last = m[1]
+	}
+	if last < len(s) {
+		parts = append(parts, replPart{lit: s[last:]})
+	}
+	return replacement{raw: s, parts: parts, hmac: true}
+}
+
+func buildKeyPatterns(key string, repl replacement, norm string) []keyPattern {
 	quotedKey := regexp.QuoteMeta(key)
+	if !repl.hmac {
+		return []keyPattern{
+			{
+				re:     regexp.MustCompile(`"` + quotedKey + `"\s*:\s*"[^"]*"`),
+				static: fmt.Sprintf(`"%s":"%s"`, key, repl.raw),
+			},
+			{
+				re:     regexp.MustCompile(`"` + quotedKey + `"\s*:\s*-?\d+(?:\.\d+)?`),
+				static: fmt.Sprintf(`"%s":"%s"`, key, repl.raw),
+			},
+			{
+				re:     regexp.MustCompile(`\\"` + quotedKey + `\\"\s*:\s*\\"[^\\"]*\\"`),
+				static: fmt.Sprintf(`\"%s\":\"%s\"`, key, repl.raw),
+			},
+		}
+	}
+	wrap := func(tok string) string { return fmt.Sprintf(`"%s":"%s"`, key, tok) }
+	wrapEsc := func(tok string) string { return fmt.Sprintf(`\"%s\":\"%s\"`, key, tok) }
 	return []keyPattern{
-		// "biin":"890501402951"
 		{
-			re:      regexp.MustCompile(`"` + quotedKey + `"\s*:\s*"[^"]*"`),
-			replace: fmt.Sprintf(`"%s":"%s"`, key, replace),
+			re:   regexp.MustCompile(`"` + quotedKey + `"\s*:\s*"([^"]*)"`),
+			hmac: true, repl: repl, norm: norm, wrap: wrap,
 		},
-		// "biin": 890501402951 (number)
 		{
-			re:      regexp.MustCompile(`"` + quotedKey + `"\s*:\s*-?\d+(?:\.\d+)?`),
-			replace: fmt.Sprintf(`"%s":"%s"`, key, replace),
+			re:   regexp.MustCompile(`"` + quotedKey + `"\s*:\s*(-?\d+(?:\.\d+)?)`),
+			hmac: true, repl: repl, norm: norm, wrap: wrap,
 		},
-		// \"biin\":\"890501402951\" (JSON embedded in a string / after remarshal)
 		{
-			re:      regexp.MustCompile(`\\"` + quotedKey + `\\"\s*:\s*\\"[^\\"]*\\"`),
-			replace: fmt.Sprintf(`\"%s\":\"%s\"`, key, replace),
+			re:   regexp.MustCompile(`\\"` + quotedKey + `\\"\s*:\s*\\"([^\\"]*)\\"`),
+			hmac: true, repl: repl, norm: norm, wrap: wrapEsc,
 		},
 	}
 }
@@ -61,17 +156,30 @@ func (m *Masker) Apply(line string) string {
 	if trimmed == "" {
 		return line
 	}
-	var v any
-	if err := json.Unmarshal([]byte(trimmed), &v); err == nil {
-		m.walk(v)
-		b, err := json.Marshal(v)
-		if err != nil {
-			return m.applyTextRules(line)
-		}
-		// Still run text rules in case of remaining escaped fragments
-		return m.applyTextRules(string(b))
+	v, ok := decodeJSONValue(trimmed)
+	if !ok {
+		return m.applyTextRules(line)
 	}
-	return m.applyTextRules(line)
+	m.walk(v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return m.applyTextRules(line)
+	}
+	return m.applyTextRules(string(b))
+}
+
+func decodeJSONValue(s string) (any, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
+	}
+	rest := strings.TrimSpace(s[int(dec.InputOffset()):])
+	if rest != "" {
+		return nil, false
+	}
+	return v, true
 }
 
 // WalkAndMask recursively masks a decoded JSON value in place using json_keys
@@ -126,24 +234,79 @@ func (m *Masker) ApplyStrings(v any) bool {
 func (m *Masker) applyTextRules(line string) string {
 	out := line
 	for _, kp := range m.keyPatterns {
-		out = kp.re.ReplaceAllString(out, kp.replace)
+		if kp.hmac {
+			out = kp.re.ReplaceAllStringFunc(out, func(match string) string {
+				sub := kp.re.FindStringSubmatch(match)
+				raw := ""
+				if len(sub) > 1 {
+					raw = sub[1]
+				}
+				return kp.wrap(m.hashOrSkip(raw, kp.norm))
+			})
+			continue
+		}
+		out = kp.re.ReplaceAllString(out, kp.static)
 	}
 	for _, r := range m.regex {
-		if re := r.Regexp(); re != nil {
-			out = re.ReplaceAllString(out, r.Replace)
-			// After outer JSON marshal, inner quotes are escaped: \"key\":\"value\"
-			escPattern := escapeJSONRegex(r.Pattern)
-			if escPattern != r.Pattern {
-				if ere, err := regexp.Compile(escPattern); err == nil {
-					out = ere.ReplaceAllString(out, escapeJSONReplace(r.Replace))
-				}
-			}
+		out = m.applyRegex(out, r.re, r.repl, r.norm)
+		if r.escRe != nil {
+			out = m.applyRegex(out, r.escRe, r.escRepl, r.norm)
 		}
 	}
 	return out
 }
 
-// escapeJSONRegex turns a pattern meant for "key":"val" into one matching \"key\":\"val\".
+func (m *Masker) applyRegex(src string, re *regexp.Regexp, repl replacement, norm string) string {
+	if re == nil {
+		return src
+	}
+	if !repl.hmac {
+		return re.ReplaceAllString(src, repl.raw)
+	}
+	return re.ReplaceAllStringFunc(src, func(match string) string {
+		sub := re.FindStringSubmatch(match)
+		idx := re.FindStringSubmatchIndex(match)
+		return m.expand(repl, match, sub, idx, re, norm)
+	})
+}
+
+func (m *Masker) expand(repl replacement, match string, sub []string, idx []int, re *regexp.Regexp, norm string) string {
+	var b strings.Builder
+	for _, p := range repl.parts {
+		if p.hmac {
+			raw := match
+			if p.group > 0 && p.group < len(sub) {
+				raw = sub[p.group]
+			}
+			b.WriteString(m.hashOrSkip(raw, norm))
+			continue
+		}
+		if re != nil && idx != nil {
+			b.WriteString(string(re.ExpandString(nil, p.lit, match, idx)))
+			continue
+		}
+		b.WriteString(p.lit)
+	}
+	return b.String()
+}
+
+func (m *Masker) hashOrSkip(raw, norm string) string {
+	if raw == "" || allStars.MatchString(raw) {
+		return "***"
+	}
+	if token.IsToken(raw) {
+		return raw
+	}
+	if m.tok == nil {
+		return "***"
+	}
+	out := m.tok.Token(raw, norm)
+	if out == "" {
+		return "***"
+	}
+	return out
+}
+
 func escapeJSONRegex(pattern string) string {
 	if !strings.Contains(pattern, `"`) {
 		return pattern
@@ -159,13 +322,23 @@ func (m *Masker) walk(v any) {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if repl, ok := m.keyReplace[k]; ok {
-				switch val.(type) {
-				case string, float64, bool, nil:
-					t[k] = repl
+			if rule, ok := m.keyReplace[k]; ok {
+				switch val := val.(type) {
+				case string:
+					t[k] = m.replaceScalar(val, rule)
 					continue
 				case json.Number:
-					t[k] = repl
+					t[k] = m.replaceScalar(val.String(), rule)
+					continue
+				case float64:
+					t[k] = m.replaceScalar(strconv.FormatFloat(val, 'f', -1, 64), rule)
+					continue
+				case bool, nil:
+					if rule.repl.hmac {
+						t[k] = "***"
+					} else {
+						t[k] = rule.repl.raw
+					}
 					continue
 				}
 			}
@@ -188,6 +361,13 @@ func (m *Masker) walk(v any) {
 			m.walk(el)
 		}
 	}
+}
+
+func (m *Masker) replaceScalar(raw string, rule keyRule) string {
+	if !rule.repl.hmac {
+		return rule.repl.raw
+	}
+	return m.expand(rule.repl, raw, []string{raw}, nil, nil, rule.norm)
 }
 
 // maskEmbeddedJSON masks JSON that is the whole string, or a suffix after prefix text
@@ -215,6 +395,7 @@ func (m *Masker) tryDecodeAndMask(s string) (string, bool) {
 		return "", false
 	}
 	dec := json.NewDecoder(strings.NewReader(trim))
+	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
 		return "", false

@@ -36,6 +36,7 @@ export LOKI_ENABLED=true
 # Include /loki when the upstream gateway serves under that prefix.
 export LOKI_URL=https://loki-dev.example/loki
 export RULES_PATH=./configs/rules.yaml
+export MASK_HMAC_KEY=$(openssl rand -base64 32)
 export PORT=:8080
 
 go run .
@@ -64,6 +65,7 @@ stack below, whose defaults leave both `false`.
 | `PORT` | `:8080` | Listen address |
 | `MAX_RESPONSE_BYTES` | `33554432` | Skip masking above this size (shared by both backends) |
 | `TEST_ME_ENABLED` | `false` | Enable the `/test-me` masking-preview UI |
+| `MASK_HMAC_KEY` | — | Raw HMAC key (min 32 bytes). Required if any rule uses `{hmac}` |
 | `BASE_PATH` | `` (root) | Path prefix for `/test-me` only (e.g. `/mysterio`); does not affect `/loki`, `/elastic`, `/healthz` |
 | `RULES_PATH` | — | Path to the masking rules YAML file; required, loaded once at startup |
 
@@ -120,8 +122,19 @@ Set `TEST_ME_ENABLED=true` to expose `/test-me` (or `{BASE_PATH}/test-me` if
 and preview the masked result. The rules editor is prefilled with the
 service's actual embedded rules, but **edits there are never applied to the
 running service** — each preview parses the submitted rules fresh and
-discards them. Off by default; not intended to be exposed outside a
-trusted network (mysterio has no built-in auth).
+discards them. When `MASK_HMAC_KEY` is set, the same page can hash a known
+value (IIN, phone, …) into the token Grafana should search for. Off by
+default; not intended to be exposed outside a trusted network (mysterio has
+no built-in auth).
+
+`{hmac}` in a rule emits a keyed HMAC token (`~` + 11-char base64url), not
+encryption — the original value cannot be recovered. `MASK_HMAC_KEY` is a
+secret (min 32 bytes; `openssl rand -base64 32`); leaking it plus
+brute-forcing a small domain (12-digit IIN) deanonymizes records. Rotating
+the key breaks correlation with old tokens. `/test-me` can hash any
+candidate value. Never log the key, put it in `rules.yaml`, or commit it.
+In Grafana search use exact match and quote the token
+(`|= "~Ab3xK9pQ_dE"`).
 
 The YAML editor uses [CodeMirror 5](https://codemirror.net/5/) (MIT
 licensed), vendored under `internal/testme/vendor/` and served by mysterio
@@ -148,6 +161,8 @@ export LOKI_URL=https://loki-prod.example/loki
 - Request logs: `docker compose logs -f mysterio`
 - Rules: bind-mounted from `configs/rules.yaml` — edit that file and run
   `docker compose restart mysterio` to apply, no rebuild needed.
+- HMAC: set `MASK_HMAC_KEY` (min 32 bytes) before compose; default IIN rules
+  use `{hmac}` and the process will not start without the key.
 
 Open dashboard **mysterio Logs**.
 
@@ -180,7 +195,9 @@ Then set Grafana datasource to `http://host.docker.internal:9999/loki` (not `loc
 
 - **JSON logs (Loki):** mask by key name (recursive), e.g. `iin` / `biin`;
   and regex over the (re)serialized line for format-based or non-JSON
-  matches (e-mail, phone, JWT, SQL/logfmt text).
+  matches (e-mail, phone, JWT, SQL/logfmt text). `replace: "{hmac}"` (with
+  optional `normalize: digits`) emits a stable token instead of asterisks
+  so the same identifier can be correlated across lines.
 - **Elasticsearch `_search`/`_msearch`:** mask by key name in `_source`, and
   run the same Apply path (embedded JSON + regex) on string fields such as
   Grafana's message field (`log` / `message`).

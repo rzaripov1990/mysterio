@@ -1,7 +1,8 @@
 json_keys:
   - name: iin
     keys: [iin, biin]
-    replace: "************"
+    replace: "{hmac}"
+    normalize: digits
 
 regex:
   - name: email

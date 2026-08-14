@@ -70,6 +70,7 @@ func clearBackendEnv(t *testing.T) {
 		"MAX_RESPONSE_BYTES",
 		"TEST_ME_ENABLED", "BASE_PATH",
 		"RULES_PATH",
+		"MASK_HMAC_KEY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -278,5 +279,143 @@ func TestLoad_RulesPathValid_PopulatesConfig(t *testing.T) {
 	}
 	if len(cfg.Rules.JSONKeys) != 1 || cfg.Rules.JSONKeys[0].Name != "iin" {
 		t.Fatalf("unexpected parsed rules: %+v", cfg.Rules)
+	}
+}
+
+func TestLoadRules_HMACPlaceholder_OK(t *testing.T) {
+	_, err := config.LoadRules([]byte(`
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+    normalize: digits
+regex:
+  - name: bare
+    pattern: '(\d{12})'
+    replace: "{hmac:$1}"
+    normalize: digits
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadRules_HMACGroupOnJSONKeys_Error(t *testing.T) {
+	if _, err := config.LoadRules([]byte(`
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac:$1}"
+`)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoadRules_HMACGroupTooHigh_Error(t *testing.T) {
+	if _, err := config.LoadRules([]byte(`
+regex:
+  - name: x
+    pattern: '(\d+)'
+    replace: "{hmac:$5}"
+`)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoadRules_UnknownNormalize_Error(t *testing.T) {
+	if _, err := config.LoadRules([]byte(`
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "***"
+    normalize: banana
+`)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoadRules_MalformedHMAC_Error(t *testing.T) {
+	if _, err := config.LoadRules([]byte(`
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac:}"
+`)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoad_HMACMissingKey_Error(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_URL", "http://loki:3100")
+	t.Setenv("RULES_PATH", writeRulesFile(t, `
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+`))
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoad_HMACShortKey_Error(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_URL", "http://loki:3100")
+	t.Setenv("MASK_HMAC_KEY", "too-short")
+	t.Setenv("RULES_PATH", writeRulesFile(t, `
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+`))
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoad_HMACKeyOK(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_URL", "http://loki:3100")
+	t.Setenv("MASK_HMAC_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("RULES_PATH", writeRulesFile(t, `
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "{hmac}"
+`))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MaskHMACKey) != 32 {
+		t.Fatalf("key len %d", len(cfg.MaskHMACKey))
+	}
+}
+
+func TestLoad_NoHMAC_NoKey_OK(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_URL", "http://loki:3100")
+	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
+	if _, err := config.Load(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadRules_RepoRulesYAML(t *testing.T) {
+	data, err := os.ReadFile("rules.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := config.LoadRules(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.RulesUseHMAC(rules) {
+		t.Fatal("expected default rules.yaml to use {hmac}")
 	}
 }

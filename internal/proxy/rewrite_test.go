@@ -21,7 +21,10 @@ json_keys:
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := masker.New(rules)
+	m, err := masker.New(rules, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	in := []byte(`{
 	  "status":"success",
@@ -81,7 +84,10 @@ json_keys:
 }
 
 func TestMaskResponseBody_NoResultPassthrough(t *testing.T) {
-	m := masker.New(config.Rules{})
+	m, err := masker.New(config.Rules{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	in := []byte(`{"status":"success","data":{"resultType":"streams","result":[]}}`)
 	out, changed, err := proxy.MaskResponseBody(in, m)
 	if err != nil {

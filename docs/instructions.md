@@ -54,10 +54,10 @@ Grafana ──HTTP(S)──▶ mysterio ──HTTP(S)──▶ Loki / Elasticsea
 (embedded JSON + regex) на **строковых** полях — так маскируется message
 field Grafana (`log` / `message`), где лежит текст лога.
 
-Что маскируется по умолчанию (см. `configs/rules.yaml`): ИИН/БИН, ФИО,
-телефоны, e-mail, токены (`Authorization`, `access_token`, `refresh_token`,
-Cookie, JWT), учётные данные форм, номера документов/счетов/карт, IBAN РК,
-IP-адреса клиента.
+Что маскируется по умолчанию (см. `configs/rules.yaml`): ИИН/БИН (HMAC-токен,
+см. раздел 5), ФИО, телефоны, e-mail, токены (`Authorization`,
+`access_token`, `refresh_token`, Cookie, JWT), учётные данные форм, номера
+документов/счетов/карт, IBAN РК, IP-адреса клиента.
 
 ### Префиксы `/loki`: Grafana vs upstream
 
@@ -107,6 +107,7 @@ mysterio один раз срезает свой mount `/loki`, затем:
 | `PORT` | нет | `:8080` | Адрес и порт прослушивания |
 | `MAX_RESPONSE_BYTES` | нет | `33554432` (32 MiB) | Ответы больше этого размера проксируются **без** маскирования (общий лимит на оба бэкенда) |
 | `TEST_ME_ENABLED` | нет | `false` | Включает страницу предпросмотра маскирования `/test-me` |
+| `MASK_HMAC_KEY` | да, если в правилах есть `{hmac}` | — | Сырой HMAC-ключ (минимум 32 байта). Генерация: `openssl rand -base64 32`. Не логировать, не класть в `rules.yaml` |
 | `BASE_PATH` | нет | пусто (корень) | Префикс путей **только** для `/test-me` (например `/mysterio`); на `/loki`, `/elastic`, `/healthz` не влияет — если сервис висит за внешним reverse-proxy не на корне, префиксацию этих маршрутов решает он |
 
 Сервис не стартует (падает с ошибкой при старте), если:
@@ -116,7 +117,9 @@ mysterio один раз срезает свой mount `/loki`, затем:
 - `MAX_RESPONSE_BYTES` задан некорректно;
 - `BASE_PATH` задан, но не начинается с `/` или заканчивается на `/`;
 - `RULES_PATH` пуст, файл по этому пути не существует/не читается, либо его
-  содержимое — невалидный YAML или невалидный regex.
+  содержимое — невалидный YAML, невалидный regex, неизвестный `normalize`,
+  либо некорректный плейсхолдер `{hmac}` / `{hmac:$N}`;
+- в правилах есть `{hmac}`, но `MASK_HMAC_KEY` не задан или короче 32 байт.
 
 Правила маскирования читаются из файла по пути `RULES_PATH` **один раз при
 старте процесса** — hot-reload нет, изменения требуют перезапуска.
@@ -128,6 +131,7 @@ export LOKI_ENABLED=true
 # Gateway с /loki; для native Loki: http://loki:3100 (без path).
 export LOKI_URL=https://loki-prod.example/loki
 export RULES_PATH=./configs/rules.yaml
+export MASK_HMAC_KEY=$(openssl rand -base64 32)
 export PORT=:8080
 go run .
 ```
@@ -137,7 +141,9 @@ go run .
 ```bash
 go build -buildvcs=false -o bin/mysterio .
 LOKI_ENABLED=true LOKI_URL=https://loki-prod.example/loki \
-  RULES_PATH=./configs/rules.yaml ./bin/mysterio
+  RULES_PATH=./configs/rules.yaml \
+  MASK_HMAC_KEY="$(openssl rand -base64 32)" \
+  ./bin/mysterio
 ```
 
 ### Запуск в Docker
@@ -147,6 +153,7 @@ docker build -t mysterio .
 docker run --rm -p 9999:8080 \
   -e LOKI_ENABLED=true \
   -e LOKI_URL=https://loki-prod.example/loki \
+  -e MASK_HMAC_KEY="$(openssl rand -base64 32)" \
   mysterio
 ```
 
@@ -160,6 +167,7 @@ docker run --rm -p 9999:8080 \
 docker run --rm -p 9999:8080 \
   -e LOKI_ENABLED=true \
   -e LOKI_URL=https://loki-prod.example/loki \
+  -e MASK_HMAC_KEY="$(openssl rand -base64 32)" \
   -v $(pwd)/configs/rules.yaml:/etc/mysterio/rules.yaml:ro \
   mysterio
 ```
@@ -267,12 +275,13 @@ datasources:
 json_keys:
   - name: iin                       # человекочитаемое имя правила
     keys: [iin, IIN, biin, BIIN]    # имена ключей (регистр важен!)
-    replace: "************"         # чем заменить значение
+    replace: "{hmac}"               # "***" или "{hmac}" / "{hmac:$N}"
+    normalize: digits               # опционально: none | digits | lower
 
 regex:
   - name: email
     pattern: '...'                  # регулярное выражение (Go RE2)
-    replace: "***@***"              # строка замены (поддерживает $1, ${1})
+    replace: "***@***"              # строка замены ($1, ${1}, {hmac}, {hmac:$N})
 ```
 
 ### Когда использовать `json_keys`
@@ -292,6 +301,11 @@ regex:
 - **объекты не маскируются**: если значение — `{...}`, `json_keys` пойдёт
   внутрь по вложенным ключам, но сам объект не заменит (для этого нужен
   `regex` — в т.ч. внутри строкового поля `_source.log` у Elasticsearch).
+- **`{hmac}`** вместо звёздочек: keyed HMAC-токен (`~` + 11 символов
+  base64url) от нормализованного значения. Один и тот же ИИН даёт один
+  токен в любом поле и бэкенде. `normalize: digits | lower | none`
+  (по умолчанию `none` = trim). Это псевдонимизация, не шифрование —
+  обратно не восстановить. Нужен `MASK_HMAC_KEY`.
 
 Примеры из `configs/rules.yaml`:
 
@@ -300,7 +314,8 @@ json_keys:
   # ИИН/БИН клиента во всех вариантах написания ключа
   - name: iin
     keys: [iin, IIN, biin, BIIN, bin, iinBin, CLIENT_BIIN]
-    replace: "************"
+    replace: "{hmac}"
+    normalize: digits
 
   # токены — заменяем значение целиком
   - name: tokens
@@ -309,8 +324,8 @@ json_keys:
 ```
 
 ```
-{"IIN":"123456123456"}              → {"IIN":"************"}
-{"data":{"biin":"123456123456"}}    → {"data":{"biin":"************"}}   (рекурсивно)
+{"IIN":"123456123456"}              → {"IIN":"~Ab3xK9pQ_dE"}
+{"data":{"biin":"123456123456"}}    → {"data":{"biin":"~Ab3xK9pQ_dE"}}   (рекурсивно)
 ```
 
 ### Когда использовать `regex`
@@ -329,6 +344,7 @@ json_keys:
   номер в URL).
 
 Замена поддерживает обратные ссылки `$1` / `${1}` — так можно сохранить имя ключа.
+Плейсхолдер `{hmac}` хеширует всё совпадение; `{hmac:$N}` — только группу N.
 
 Примеры из `configs/rules.yaml`:
 
@@ -343,7 +359,8 @@ regex:
   # (iin=..., SQL, номер в URL). \b исключает 10/13-значные таймстампы.
   - name: iin_bin_bare
     pattern: '\b\d{12}\b'
-    replace: "************"
+    replace: "{hmac}"
+    normalize: digits
 
   # формат: JWT (три base64url-сегмента) — где бы ни встретился
   - name: jwt
@@ -358,8 +375,8 @@ regex:
 ```
 
 ```
-iin=123456123456                          → iin=************
-WHERE iin = '123456123456'                → WHERE iin = '************'
+iin=123456123456                          → iin=~Ab3xK9pQ_dE
+WHERE iin = '123456123456'                → WHERE iin = '~Ab3xK9pQ_dE'
 "fullName":{"RU":"Шлтев Мутар ..."}        → "fullName":"***"
 "Authorization":"Bearer eyJ...."           → "Authorization":"***"
 ```
@@ -369,6 +386,7 @@ WHERE iin = '123456123456'                → WHERE iin = '************'
 | Ситуация | Механизм | Бэкенды |
 | --- | --- | --- |
 | Скаляр по имени ключа (`iin`, `access_token`) | `json_keys` | Loki, Elasticsearch |
+| Нужна корреляция (найти все логи одного ИИН) | `json_keys`/`regex` с `{hmac}` | Loki, Elasticsearch |
 | Значение по формату (e-mail, телефон, JWT, IBAN, IP) | `regex` | Loki; Elastic — в строковых полях `_source` |
 | Объект-значение целиком (`{KZ,RU,EN}`, `{value,type}`) | `regex` | Loki; Elastic — в строковых полях `_source` |
 | Данные в не-JSON строках (SQL, logfmt, query, `_source.log`) | `regex` | Loki, Elasticsearch |
@@ -380,16 +398,88 @@ WHERE iin = '123456123456'                → WHERE iin = '************'
    **формату/объекту/не-JSON** (→ `regex`). Оба механизма работают и для
    Loki, и для строковых полей Elasticsearch `_source` (message field).
 2. Добавьте запись в соответствующую секцию `configs/rules.yaml`.
+   Для корреляции (ИИН, телефон) ставьте `replace: "{hmac}"` и тот же
+   `normalize` на всех правилах, которые должны давать один токен
+   (json_keys `iin` и regex `iin_bin_bare` — оба `digits`).
 3. **Перезапустите** процесс/контейнер (`RULES_PATH` читается один раз при
    старте, пересборка не нужна) — либо сначала проверьте правило без
-   перезапуска через `/test-me` (см. раздел 5).
+   перезапуска через `/test-me` (см. раздел 6).
 4. Проверьте на реальной строке лога, что значение замаскировано, а не-целевые
    данные не затронуты (осторожно с широкими `regex` — возможны ложные
    срабатывания).
 
 ---
 
-## 5. Тестовая страница `/test-me`
+## 5. HMAC-токены: ключ и поиск в Grafana
+
+Дефолтные правила ИИН/БИН (`iin` и `iin_bin_bare`) заменяют значение не на
+звёздочки, а на стабильный токен вида `~Ab3xK9pQ_dE`. Один и тот же номер
+даёт один токен в JSON-поле, в SQL и в URL — и в Loki, и в Elasticsearch.
+По токену можно сгруппировать логи одного человека, не видя ИИН.
+
+Это **keyed hash (псевдонимизация), не шифрование**. Обратно в ИИН токен
+не восстановить. Пароли, JWT, ФИО, e-mail по умолчанию по-прежнему `***`.
+
+### Ключ `MASK_HMAC_KEY`
+
+1. Сгенерируйте один раз и сохраните в секрет хранилища (не в git):
+
+   ```bash
+   openssl rand -base64 32
+   ```
+
+   Минимум 32 байта; значение берётся **как есть** (не hex-decode).
+2. Передайте в процесс: env, docker `-e`, compose `MASK_HMAC_KEY: ${MASK_HMAC_KEY}`.
+   В `docker-compose.yml` дефолта нет — без переменной на хосте сервис
+   не стартует, пока в правилах есть `{hmac}`.
+3. Не кладите ключ в `rules.yaml`, не коммитьте, не пишите в логи mysterio.
+
+Утечка ключа + перебор 12-значного ИИН снимает псевдонимизацию. **Ротация
+ключа** делает старые токены несовместимыми с новыми: джойн «старый лог +
+новый лог» по токену перестанет работать. Меняйте ключ только если это
+осознанно.
+
+### Как добавить `{hmac}` в правило
+
+```yaml
+json_keys:
+  - name: iin
+    keys: [iin, IIN, biin]
+    replace: "{hmac}"
+    normalize: digits          # none | digits | lower; по умолчанию none
+
+regex:
+  - name: iin_bin_bare
+    pattern: '\b\d{12}\b'
+    replace: "{hmac}"          # всё совпадение
+    normalize: digits
+  - name: named
+    pattern: '"(k)"\s*:\s*"([^"]*)"'
+    replace: '"${1}":"{hmac:$2}"'   # хешировать только группу 2
+```
+
+- `{hmac:$N}` в `json_keys` запрещён — хешируется весь скаляр.
+- `null` / `bool` / пустая строка / уже замаскированное `***` → `***`, не токен.
+- Поля, которые хотите джойнить, должны иметь **одинаковый `normalize`**.
+  Иначе `"iin":"+7701…"` и `7701…` дадут разные токены.
+
+### Найти логи по известному ИИН
+
+1. Откройте `/test-me` (`TEST_ME_ENABLED=true`).
+2. Блок **Lookup token for Grafana**: вставьте ИИН, `normalize` = как в
+   правиле (`digits` для ИИН), **Hash**, **Copy**.
+3. В Grafana Explore вставьте токен как **точное совпадение**, в кавычках:
+
+   - Loki: `{k8s_app="…"} |= "~Ab3xK9pQ_dE"`
+   - Elasticsearch: query string с кавычками, `"~Ab3xK9pQ_dE"`
+     (не `|~` без кавычек: в LogQL `~` — оператор regex).
+
+Ключ на страницу не отдаётся. `/test-me` умеет посчитать токен для любого
+известного значения — не выставляйте её за пределы доверенной сети.
+
+---
+
+## 6. Тестовая страница `/test-me`
 
 Страница для проверки правил маскирования без пересборки и без риска для
 прод-конфигурации сервиса.
@@ -404,9 +494,9 @@ WHERE iin = '123456123456'                → WHERE iin = '************'
   «Mask» текст правил и строка лога отправляются на бэкенд, там поднимается
   одноразовый парсер правил и маскер, результат возвращается и отображается
   — «боевой» маскер сервиса при этом не трогается.
-- Не предполагает встроенной аутентификации — не выставляйте наружу без
-  дополнительной защиты (например, за VPN или базовой авторизацией на
-  уровне reverse-proxy).
+- Lookup HMAC-токена для Grafana — см. раздел 5. Ключ на страницу не
+  отдаётся; не выставляйте `/test-me` за пределы доверенной сети
+  (встроенной авторизации нет).
 
-Пример: `TEST_ME_ENABLED=true LOKI_ENABLED=true LOKI_URL=... go run .`, затем
-открыть `http://localhost:8080/test-me`.
+Пример: `TEST_ME_ENABLED=true LOKI_ENABLED=true LOKI_URL=... \
+  MASK_HMAC_KEY=... go run .`, затем открыть `http://localhost:8080/test-me`.

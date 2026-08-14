@@ -16,6 +16,7 @@ import (
 	config "mysterio/configs"
 	"mysterio/internal/masker"
 	"mysterio/internal/testme"
+	"mysterio/internal/token"
 )
 
 func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
@@ -46,7 +47,11 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	}
 
 	if cfg.TestMeEnabled {
-		tm := testme.NewHandler(cfg.BasePath, cfg.RawRulesYAML)
+		var tok *token.Tokenizer
+		if len(cfg.MaskHMACKey) > 0 {
+			tok = token.New(cfg.MaskHMACKey)
+		}
+		tm := testme.NewHandler(cfg.BasePath, cfg.RawRulesYAML, tok)
 		mux.Handle(cfg.BasePath+"/test-me", tm)
 		mux.Handle(cfg.BasePath+"/test-me/", tm)
 	}

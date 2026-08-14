@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -16,8 +17,10 @@ import (
 //
 // Returns (body, changed, err). Shapes without hits.hits are unchanged.
 func MaskElasticResponseBody(body []byte, m *masker.Masker, messageField string) ([]byte, bool, error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
 	var root map[string]any
-	if err := json.Unmarshal(body, &root); err != nil {
+	if err := dec.Decode(&root); err != nil {
 		return body, false, err
 	}
 

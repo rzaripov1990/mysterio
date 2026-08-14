@@ -10,6 +10,7 @@ services:
       ELASTIC_URL: ${ELASTIC_URL:-}
       ELASTIC_MESSAGE_FIELD: ${ELASTIC_MESSAGE_FIELD:-}
       TEST_ME_ENABLED: ${TEST_ME_ENABLED:-true}
+      MASK_HMAC_KEY: ${MASK_HMAC_KEY:-}
       RULES_PATH: /etc/mysterio/rules.yaml
       PORT: ":8080"
     volumes:

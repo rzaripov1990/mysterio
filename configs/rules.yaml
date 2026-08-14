@@ -9,13 +9,17 @@
 #               containing a quote, an escaped-quote variant (\"key\":\"val\")
 #               is compiled and applied automatically, so one rule covers both
 #               plain JSON and JSON escaped inside a string.
+#   replace: "{hmac}" — keyed HMAC token (~ + 11-char base64url) instead of
+#               asterisks; optional normalize: digits | lower | none.
+#               Requires MASK_HMAC_KEY (min 32 bytes).
 
 json_keys:
   # ИИН / БИН физлица и клиента. Ключи чувствительны к регистру, поэтому
   # перечисляем все встречающиеся варианты (IIN, BIIN, CLIENT_BIIN, ...).
   - name: iin
     keys: [iin, IIN, biin, BIIN, bin, iinBin, CLIENT_BIIN]
-    replace: "************"
+    replace: "{hmac}"
+    normalize: digits
 
   # Токены и заголовки авторизации — маскируем значение целиком.
   - name: tokens
@@ -65,7 +69,8 @@ regex:
   # времени и epoch-таймстампы не попадут под маску.
   - name: iin_bin_bare
     pattern: '\b\d{12}\b'
-    replace: "************"
+    replace: "{hmac}"
+    normalize: digits
 
   # e-mail
   - name: email

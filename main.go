@@ -12,6 +12,7 @@ import (
 	config "mysterio/configs"
 	"mysterio/internal/masker"
 	"mysterio/internal/proxy"
+	"mysterio/internal/token"
 )
 
 func main() {
@@ -21,7 +22,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := masker.New(cfg.Rules)
+	var tok *token.Tokenizer
+	if len(cfg.MaskHMACKey) > 0 {
+		tok = token.New(cfg.MaskHMACKey)
+	}
+	m, err := masker.New(cfg.Rules, tok)
+	if err != nil {
+		slog.Error("masker", "err", err)
+		os.Exit(1)
+	}
 	h, err := proxy.NewHandler(cfg, m)
 	if err != nil {
 		slog.Error("handler", "err", err)
