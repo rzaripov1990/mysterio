@@ -67,6 +67,7 @@ func clearBackendEnv(t *testing.T) {
 	for _, k := range []string{
 		"LOKI_ENABLED", "LOKI_URL",
 		"ELASTIC_ENABLED", "ELASTIC_URL", "ELASTIC_MESSAGE_FIELD",
+		"GRAPHQL_ENABLED", "GRAPHQL_URL",
 		"MAX_RESPONSE_BYTES",
 		"TEST_ME_ENABLED", "BASE_PATH",
 		"RULES_PATH",
@@ -417,5 +418,156 @@ func TestLoadRules_RepoRulesYAML(t *testing.T) {
 	}
 	if !config.RulesUseHMAC(rules) {
 		t.Fatal("expected default rules.yaml to use {hmac}")
+	}
+}
+
+func TestLoadRules_GraphQLBlock(t *testing.T) {
+	content := `
+json_keys:
+  - name: iin
+    keys: [iin]
+    replace: "***"
+graphql:
+  json_keys:
+    - name: client
+      keys: [clientName, email]
+      replace: "***"
+    - name: gql_iin
+      keys: [iin]
+      replace: "{hmac}"
+      normalize: digits
+`
+	rules, err := config.LoadRules([]byte(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules.GraphQL.JSONKeys) != 2 {
+		t.Fatalf("expected 2 graphql json_keys, got %+v", rules.GraphQL.JSONKeys)
+	}
+	if got := rules.GraphQL.JSONKeys[0].Keys; len(got) != 2 || got[1] != "email" {
+		t.Fatalf("unexpected graphql keys: %+v", got)
+	}
+	if rules.GraphQL.JSONKeys[1].Normalize != "digits" {
+		t.Fatalf("unexpected normalize: %+v", rules.GraphQL.JSONKeys[1])
+	}
+}
+
+func TestLoadRules_GraphQLUnknownNormalize_Error(t *testing.T) {
+	content := `
+graphql:
+  json_keys:
+    - name: bad
+      keys: [iin]
+      replace: "{hmac}"
+      normalize: upper
+`
+	if _, err := config.LoadRules([]byte(content)); err == nil {
+		t.Fatal("expected error for unknown normalize in graphql block")
+	}
+}
+
+func TestLoadRules_GraphQLHMACGroup_Error(t *testing.T) {
+	content := `
+graphql:
+  json_keys:
+    - name: bad
+      keys: [iin]
+      replace: "{hmac:$1}"
+`
+	if _, err := config.LoadRules([]byte(content)); err == nil {
+		t.Fatal("expected error for {hmac:$N} in graphql json_keys")
+	}
+}
+
+func TestRulesUseHMAC_GraphQLBlockOnly(t *testing.T) {
+	rules, err := config.LoadRules([]byte(`
+graphql:
+  json_keys:
+    - name: iin
+      keys: [iin]
+      replace: "{hmac}"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.RulesUseHMAC(rules) {
+		t.Fatal("expected RulesUseHMAC=true when only the graphql block uses {hmac}")
+	}
+}
+
+func TestLoad_GraphQLEnabledMissingURL_Error(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("GRAPHQL_ENABLED", "true")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error for GRAPHQL_ENABLED=true with empty GRAPHQL_URL")
+	}
+}
+
+func TestLoad_GraphQLEnabledInvalidURL_Error(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("GRAPHQL_ENABLED", "true")
+	t.Setenv("GRAPHQL_URL", "http://example.com/%zz")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error for unparseable GRAPHQL_URL")
+	}
+}
+
+func TestLoad_GraphQLEnabledOnly_Success(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("GRAPHQL_ENABLED", "true")
+	t.Setenv("GRAPHQL_URL", "http://api:4000/graphql")
+	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GraphQLEnabled || cfg.GraphQLURL != "http://api:4000/graphql" {
+		t.Fatalf("unexpected graphql config: %+v", cfg)
+	}
+	if cfg.LokiEnabled || cfg.ElasticEnabled {
+		t.Fatal("expected loki/elastic disabled")
+	}
+}
+
+func TestLoad_GraphQLHMACInGraphQLBlock_RequiresKey(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("GRAPHQL_ENABLED", "true")
+	t.Setenv("GRAPHQL_URL", "http://api:4000/graphql")
+	t.Setenv("RULES_PATH", writeRulesFile(t, `
+graphql:
+  json_keys:
+    - name: iin
+      keys: [iin]
+      replace: "{hmac}"
+`))
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error: graphql block uses {hmac} but MASK_HMAC_KEY is empty")
+	}
+}
+
+func TestLoadRules_RepoRulesYAML_HasGraphQLBlock(t *testing.T) {
+	data, err := os.ReadFile("rules.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := config.LoadRules(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules.GraphQL.JSONKeys) == 0 {
+		t.Fatal("expected rules.yaml to define a graphql block")
+	}
+	// The graphql block replaces the global rules on /graphql, so it has to be
+	// self-sufficient: the keys that matter most must be listed there too.
+	seen := map[string]bool{}
+	for _, r := range rules.GraphQL.JSONKeys {
+		for _, k := range r.Keys {
+			seen[k] = true
+		}
+	}
+	for _, must := range []string{"iin", "Authorization", "password", "phone"} {
+		if !seen[must] {
+			t.Fatalf("graphql block must cover key %q (it does not inherit global rules)", must)
+		}
 	}
 }

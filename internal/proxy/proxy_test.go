@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,5 +321,187 @@ func TestNewHandler_TestMeEnabled_BasePath_IngressRewrite(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 on prefixed path (ingress already stripped it), got %d", rec.Code)
+	}
+}
+
+const graphqlRulesYAML = `
+json_keys:
+  - name: global_only
+    keys: [globalSecret]
+    replace: "GLOBAL-MASKED"
+graphql:
+  json_keys:
+    - name: iin
+      keys: [iin]
+      replace: "************"
+`
+
+func graphqlCfg(t *testing.T, upstreamURL string) config.Config {
+	t.Helper()
+	rules, err := config.LoadRules([]byte(graphqlRulesYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config.Config{
+		MaxResponseBytes: 1 << 20,
+		GraphQLEnabled:   true,
+		GraphQLURL:       upstreamURL,
+		Rules:            rules,
+	}
+}
+
+func TestNewHandler_GraphQLRouting_UsesUpstreamPathAndForwardsToken(t *testing.T) {
+	var gotPath, gotAuth, gotMethod string
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := graphqlCfg(t, upstream.URL+"/api/graphql")
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{ok}"}`))
+	req.Header.Set("Authorization", "Bearer outside-token")
+	h.ServeHTTP(rec, req)
+
+	if gotPath != "/api/graphql" {
+		t.Fatalf("expected upstream path /api/graphql, got %q", gotPath)
+	}
+	if gotAuth != "Bearer outside-token" {
+		t.Fatalf("expected client Authorization forwarded as-is, got %q", gotAuth)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("expected POST, got %q", gotMethod)
+	}
+	if string(gotBody) != `{"query":"{ok}"}` {
+		t.Fatalf("request body altered: %q", gotBody)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestNewHandler_GraphQLResponse_MaskedWithGraphQLBlockOnly(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"client":{"iin":"900101300123","globalSecret":"keep-me"}}}`))
+	}))
+	defer upstream.Close()
+
+	h, err := proxy.NewHandler(graphqlCfg(t, upstream.URL+"/graphql"), testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{c}"}`)))
+
+	body := rec.Body.String()
+	if strings.Contains(body, "900101300123") {
+		t.Fatalf("graphql json_keys not applied: %s", body)
+	}
+	if !strings.Contains(body, `"globalSecret":"keep-me"`) {
+		t.Fatalf("global json_keys must not apply on /graphql: %s", body)
+	}
+}
+
+func TestNewHandler_GraphQLResponse_AlwaysJSONContentType(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`<html>502 Bad Gateway iin=900101300123</html>`))
+	}))
+	defer upstream.Close()
+
+	h, err := proxy.NewHandler(graphqlCfg(t, upstream.URL+"/graphql"), testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{c}"}`)))
+
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected application/json, got %q", ct)
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected upstream status 502 preserved, got %d", rec.Code)
+	}
+	if !json.Valid(rec.Body.Bytes()) {
+		t.Fatalf("expected JSON body, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "upstream_status") {
+		t.Fatalf("expected error envelope, got %s", rec.Body.String())
+	}
+}
+
+func TestNewHandler_GraphQLDisabled_404(t *testing.T) {
+	cfg := config.Config{MaxResponseBytes: 1 << 20, LokiEnabled: true, LokiURL: "http://loki:3100"}
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when GRAPHQL_ENABLED is false, got %d", rec.Code)
+	}
+}
+
+func TestNewHandler_GraphQLEnabledOnly_IsValidBackend(t *testing.T) {
+	cfg := config.Config{MaxResponseBytes: 1 << 20, GraphQLEnabled: true, GraphQLURL: "http://api:4000/graphql"}
+	if _, err := proxy.NewHandler(cfg, testMasker(t)); err != nil {
+		t.Fatalf("graphql-only handler should build: %v", err)
+	}
+}
+
+func TestNewHandler_GraphQLUpstreamUnreachable_JSONEnvelope(t *testing.T) {
+	// Port 1 on loopback refuses connections, so the request never reaches a
+	// response and ReverseProxy falls back to ErrorHandler.
+	h, err := proxy.NewHandler(graphqlCfg(t, "http://127.0.0.1:1/graphql"), testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{c}"}`)))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected application/json, got %q", ct)
+	}
+	if !json.Valid(rec.Body.Bytes()) {
+		t.Fatalf("expected a JSON body even when the upstream is unreachable, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"errors"`) {
+		t.Fatalf("expected a GraphQL error envelope, got %s", rec.Body.String())
+	}
+}
+
+func TestNewHandler_LokiUpstreamUnreachable_StaysPlainText(t *testing.T) {
+	cfg := config.Config{MaxResponseBytes: 1 << 20, LokiEnabled: true, LokiURL: "http://127.0.0.1:1"}
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/loki/api/v1/query", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "bad gateway" {
+		t.Fatalf("loki error response changed: %q", body)
 	}
 }

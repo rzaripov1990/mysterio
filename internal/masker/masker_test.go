@@ -322,3 +322,26 @@ json_keys:
 		t.Fatalf("apply: %s", got)
 	}
 }
+
+// The default (log) maskers must keep descending into object-valued keys —
+// Loki and Elasticsearch rules rely on regex for those, and replacing the
+// whole object here would change long-standing behaviour.
+func TestNew_DefaultKeepsObjectValues(t *testing.T) {
+	rules, err := config.LoadRules([]byte(`
+json_keys:
+  - name: names
+    keys: [fullName]
+    replace: "***"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := masker.New(rules, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := m.Apply(`{"fullName":{"ru":"Ivanov"}}`)
+	if !strings.Contains(out, "Ivanov") {
+		t.Fatalf("default masker must not replace object values: %s", out)
+	}
+}

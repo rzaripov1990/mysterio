@@ -123,3 +123,88 @@ regex:
   - name: ipv4
     pattern: '\b(?:\d{1,3}\.){3}\d{1,3}\b'
     replace: "***.***.***.***"
+
+# ---------------------------------------------------------------------------
+# GraphQL (/graphql). Эти правила ЗАМЕНЯЮТ глобальные json_keys/regex, а не
+# дополняют их: на /graphql применяется только то, что перечислено здесь.
+# Поэтому блок самодостаточен и дублирует нужные ключи из глобального набора.
+#
+# Маскирование идёт по имени ключа рекурсивно по всему документу — data,
+# errors, extensions, вложенные объекты и массивы. Regex здесь нет: ответ
+# GraphQL — это структурированный JSON, а не логовая строка. Вместо него
+# ключ с объектным или массивным значением заменяется целиком, поэтому поле
+# вида fullName { ru kz en } маскируется как единое целое.
+# ---------------------------------------------------------------------------
+graphql:
+  json_keys:
+    # ИИН / БИН.
+    - name: iin
+      keys: [iin, IIN, biin, BIIN, bin, iinBin, CLIENT_BIIN]
+      replace: "{hmac}"
+      normalize: digits
+
+    # Токены и заголовки авторизации.
+    - name: tokens
+      keys:
+        [
+          Authorization,
+          authorization,
+          access_token,
+          accessToken,
+          refresh_token,
+          refreshToken,
+          id_token,
+          idToken,
+          Cookie,
+          cookie,
+          Set-Cookie,
+        ]
+      replace: "***"
+
+    # Учётные данные.
+    - name: credentials
+      keys: [password, pwd, secret, client_secret, clientSecret]
+      replace: "***"
+
+    # Телефон.
+    - name: phone
+      keys: [phone, telephone, msisdn, phoneNumber]
+      replace: "***"
+
+    # E-mail.
+    - name: email
+      keys: [email, Email, EMAIL, eMail]
+      replace: "***@***"
+
+    # Номера документов и счетов.
+    - name: doc_account_number
+      keys: [NUMBER, ACCOUNT_NUMBER, accountNumber, iban, IBAN]
+      replace: "***"
+
+    # Номер карты.
+    - name: card
+      keys: [MASK_CARD, cardNumber, pan, card_number]
+      replace: "***"
+
+    # ФИО. В GraphQL приходит строкой или объектом {ru,kz,en} — объект
+    # маскируется целиком в "***".
+    - name: names
+      keys:
+        [
+          nameRu,
+          nameKz,
+          nameEn,
+          firstName,
+          FIRSTNAME,
+          lastName,
+          LASTNAME,
+          middleName,
+          MIDDLENAME,
+          firstNameRu,
+          lastNameRu,
+          middleNameRu,
+          fullName,
+          FULLNAME,
+          FULL_NAME,
+        ]
+      replace: "***"

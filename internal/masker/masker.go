@@ -16,8 +16,20 @@ var (
 	allStars        = regexp.MustCompile(`^\*+$`)
 )
 
+// Options tunes masking behaviour that differs between backends.
+type Options struct {
+	// MaskContainerValues replaces an object- or array-valued match of a
+	// json_keys rule with the rule's replacement instead of descending into
+	// it. Log backends leave it off (their rules cover containers with
+	// regex); the GraphQL route turns it on, because a GraphQL field like
+	// fullName { ru kz en } is an object and the graphql rules block has no
+	// regex mechanism to reach it.
+	MaskContainerValues bool
+}
+
 type Masker struct {
 	tok         *token.Tokenizer
+	opts        Options
 	keyReplace  map[string]keyRule
 	regex       []compiledRegex
 	keyPatterns []keyPattern
@@ -58,11 +70,16 @@ type replPart struct {
 }
 
 func New(rules config.Rules, tok *token.Tokenizer) (*Masker, error) {
+	return NewWithOptions(rules, tok, Options{})
+}
+
+func NewWithOptions(rules config.Rules, tok *token.Tokenizer, opts Options) (*Masker, error) {
 	if config.RulesUseHMAC(rules) && tok == nil {
 		return nil, fmt.Errorf("MASK_HMAC_KEY is not set but rules use {hmac}")
 	}
 	m := &Masker{
 		tok:        tok,
+		opts:       opts,
 		keyReplace: make(map[string]keyRule),
 	}
 	for _, r := range rules.JSONKeys {
@@ -334,12 +351,13 @@ func (m *Masker) walk(v any) {
 					t[k] = m.replaceScalar(strconv.FormatFloat(val, 'f', -1, 64), rule)
 					continue
 				case bool, nil:
-					if rule.repl.hmac {
-						t[k] = "***"
-					} else {
-						t[k] = rule.repl.raw
-					}
+					t[k] = m.staticReplacement(rule)
 					continue
+				case map[string]any, []any:
+					if m.opts.MaskContainerValues {
+						t[k] = m.staticReplacement(rule)
+						continue
+					}
 				}
 			}
 			if s, ok := val.(string); ok {
@@ -361,6 +379,15 @@ func (m *Masker) walk(v any) {
 			m.walk(el)
 		}
 	}
+}
+
+// staticReplacement is the replacement for a value with nothing to hash —
+// a bool, null, or (with MaskContainerValues) a whole object or array.
+func (m *Masker) staticReplacement(rule keyRule) string {
+	if rule.repl.hmac {
+		return "***"
+	}
+	return rule.repl.raw
 }
 
 func (m *Masker) replaceScalar(raw string, rule keyRule) string {

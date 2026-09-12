@@ -19,9 +19,19 @@ import (
 	"mysterio/internal/token"
 )
 
+// backendKind selects how a reverse proxy rewrites the upstream path and how
+// its responses are masked.
+type backendKind int
+
+const (
+	backendLoki backendKind = iota
+	backendElastic
+	backendGraphQL
+)
+
 func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
-	if !cfg.LokiEnabled && !cfg.ElasticEnabled {
-		return nil, fmt.Errorf("no backend enabled: set LOKI_ENABLED and/or ELASTIC_ENABLED")
+	if !cfg.LokiEnabled && !cfg.ElasticEnabled && !cfg.GraphQLEnabled {
+		return nil, fmt.Errorf("no backend enabled: set LOKI_ENABLED, ELASTIC_ENABLED and/or GRAPHQL_ENABLED")
 	}
 
 	mux := http.NewServeMux()
@@ -31,7 +41,7 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	})
 
 	if cfg.LokiEnabled {
-		rp, err := newReverseProxy(cfg.LokiURL, cfg, m, false)
+		rp, err := newReverseProxy(cfg.LokiURL, cfg, m, backendLoki, nil)
 		if err != nil {
 			return nil, fmt.Errorf("loki upstream: %w", err)
 		}
@@ -39,19 +49,34 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	}
 
 	if cfg.ElasticEnabled {
-		rp, err := newReverseProxy(cfg.ElasticURL, cfg, m, true)
+		rp, err := newReverseProxy(cfg.ElasticURL, cfg, m, backendElastic, nil)
 		if err != nil {
 			return nil, fmt.Errorf("elastic upstream: %w", err)
 		}
 		mux.Handle("/elastic/", http.StripPrefix("/elastic", rp))
 	}
 
-	if cfg.TestMeEnabled {
-		var tok *token.Tokenizer
-		if len(cfg.MaskHMACKey) > 0 {
-			tok = token.New(cfg.MaskHMACKey)
+	if cfg.GraphQLEnabled {
+		// The /graphql route masks with the rules file's graphql block only —
+		// it REPLACES the global json_keys/regex rather than extending them.
+		gqlMasker, err := masker.NewWithOptions(
+			config.Rules{JSONKeys: cfg.Rules.GraphQL.JSONKeys},
+			processTokenizer(cfg),
+			masker.Options{MaskContainerValues: true},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("graphql masker: %w", err)
 		}
-		tm := testme.NewHandler(cfg.BasePath, cfg.RawRulesYAML, tok)
+		rp, err := newReverseProxy(cfg.GraphQLURL, cfg, gqlMasker, backendGraphQL, m)
+		if err != nil {
+			return nil, fmt.Errorf("graphql upstream: %w", err)
+		}
+		mux.Handle("/graphql", rp)
+		mux.Handle("/graphql/", rp)
+	}
+
+	if cfg.TestMeEnabled {
+		tm := testme.NewHandler(cfg.BasePath, cfg.RawRulesYAML, processTokenizer(cfg))
 		mux.Handle("/test-me", tm)
 		mux.Handle("/test-me/", tm)
 	}
@@ -59,7 +84,20 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	return withLogging(mux), nil
 }
 
-func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, elastic bool) (*httputil.ReverseProxy, error) {
+// processTokenizer returns the process HMAC tokenizer, or nil when
+// MASK_HMAC_KEY is unset. masker.New rejects {hmac} rules with a nil
+// tokenizer, so a misconfiguration fails at startup rather than silently
+// falling back to "***".
+func processTokenizer(cfg config.Config) *token.Tokenizer {
+	if len(cfg.MaskHMACKey) == 0 {
+		return nil
+	}
+	return token.New(cfg.MaskHMACKey)
+}
+
+// textMasker is only used by backendGraphQL, to mask the excerpt of a
+// non-JSON upstream body it puts in its error envelope; pass nil otherwise.
+func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, kind backendKind, textMasker *masker.Masker) (*httputil.ReverseProxy, error) {
 	upstream, err := url.Parse(rawUpstream)
 	if err != nil {
 		return nil, err
@@ -72,7 +110,7 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 	// normalize to what the upstream actually serves.
 	pathPrefix := ""
 	proxyTarget := upstream
-	if !elastic {
+	if kind == backendLoki {
 		pathPrefix = strings.TrimSuffix(upstream.Path, "/")
 		base := *upstream
 		base.Path = ""
@@ -87,8 +125,16 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 	rp.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.Host = upstream.Host
-		if !elastic {
+		switch kind {
+		case backendLoki:
 			req.URL.Path = normalizeLokiUpstreamPath(req.URL.Path, pathPrefix)
+			req.URL.RawPath = ""
+		case backendGraphQL:
+			// GraphQL is a single endpoint: whatever came in under /graphql
+			// goes to exactly the path in GRAPHQL_URL. Client headers
+			// (Authorization, Cookie) are forwarded untouched — the token
+			// always comes from the caller, never from this service.
+			req.URL.Path = upstream.Path
 			req.URL.RawPath = ""
 		}
 	}
@@ -104,10 +150,14 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 			"content_type", resp.Header.Get("Content-Type"),
 			"content_encoding", resp.Header.Get("Content-Encoding"),
 		)
-		if elastic {
+		switch kind {
+		case backendElastic:
 			return modifyElasticResponse(resp, cfg, m, path)
+		case backendGraphQL:
+			return modifyGraphQLResponse(resp, cfg, GraphQLMaskers{Doc: m, Text: textMasker})
+		default:
+			return modifyResponse(resp, cfg, m)
 		}
-		return modifyResponse(resp, cfg, m)
 	}
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Error("upstream error",
@@ -116,6 +166,13 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, el
 			"path", r.URL.Path,
 			"query", r.URL.RawQuery,
 		)
+		if kind == backendGraphQL {
+			// The /graphql contract is "always JSON", and an unreachable
+			// upstream never produces a response for ModifyResponse to
+			// rewrite — emit the envelope here instead.
+			writeGraphQLGatewayError(w)
+			return
+		}
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
 	return rp, nil
@@ -144,7 +201,7 @@ func normalizeLokiUpstreamPath(path, prefix string) string {
 }
 
 func modifyResponse(resp *http.Response, cfg config.Config, m *masker.Masker) error {
-	return modifyResponseBody(resp, cfg, func(body []byte) ([]byte, error) {
+	return modifyResponseBody(resp, cfg, false, func(body []byte) ([]byte, error) {
 		ct := resp.Header.Get("Content-Type")
 		if !strings.Contains(ct, "json") && !bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) {
 			return body, nil
@@ -161,7 +218,7 @@ func modifyElasticResponse(resp *http.Response, cfg config.Config, m *masker.Mas
 	if !strings.HasSuffix(path, "_search") && !strings.HasSuffix(path, "_msearch") {
 		return nil
 	}
-	return modifyResponseBody(resp, cfg, func(body []byte) ([]byte, error) {
+	return modifyResponseBody(resp, cfg, false, func(body []byte) ([]byte, error) {
 		out, _, err := MaskElasticResponseBody(body, m, cfg.ElasticMessageField)
 		if err != nil {
 			return body, err
@@ -170,18 +227,62 @@ func modifyElasticResponse(resp *http.Response, cfg config.Config, m *masker.Mas
 	})
 }
 
+// modifyGraphQLResponse rewrites every GraphQL response into masked JSON.
+// Error statuses are processed too (an ingress HTML 502 must still leave as
+// a GraphQL error envelope), and Content-Type is forced to application/json.
+func modifyGraphQLResponse(resp *http.Response, cfg config.Config, mk GraphQLMaskers) error {
+	if isProtocolUpgrade(resp) {
+		// GraphQL subscriptions over websocket: proxy the handshake verbatim.
+		return nil
+	}
+	status := resp.StatusCode
+	err := modifyResponseBody(resp, cfg, true, func(body []byte) ([]byte, error) {
+		out, _, err := MaskGraphQLResponseBody(body, mk, status)
+		if err != nil {
+			return body, err
+		}
+		return out, nil
+	})
+	if err != nil {
+		return err
+	}
+	resp.Header.Set("Content-Type", "application/json; charset=utf-8")
+	return nil
+}
+
+// writeGraphQLGatewayError emits a GraphQL error envelope for a request that
+// never reached the upstream. The error text is this service's own, so there
+// is nothing from the upstream to mask.
+func writeGraphQLGatewayError(w http.ResponseWriter) {
+	const body = `{"data":null,"errors":[{"message":"upstream unreachable",` +
+		`"extensions":{"upstream_status":502}}]}`
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusBadGateway)
+	_, _ = io.WriteString(w, body)
+}
+
+// isProtocolUpgrade reports whether resp is a protocol upgrade (websocket,
+// h2c) that must be proxied verbatim. ReverseProxy runs ModifyResponse on 101
+// responses before it strips hop-by-hop headers, so both signals are available
+// here.
+func isProtocolUpgrade(resp *http.Response) bool {
+	return resp.StatusCode == http.StatusSwitchingProtocols ||
+		strings.EqualFold(resp.Header.Get("Upgrade"), "websocket")
+}
+
 // modifyResponseBody buffers, decompresses (if gzip), size-limits, and hands
 // the response body to mask for optional rewriting, then writes the result
 // back onto resp. If mask returns an error, the original body is used
-// instead (passthrough).
-func modifyResponseBody(resp *http.Response, cfg config.Config, mask func([]byte) ([]byte, error)) error {
-	if resp.StatusCode >= 400 {
+// instead (passthrough). maskErrors=false leaves 4xx/5xx bodies untouched.
+func modifyResponseBody(resp *http.Response, cfg config.Config, maskErrors bool, mask func([]byte) ([]byte, error)) error {
+	if resp.StatusCode >= 400 && !maskErrors {
 		return nil
 	}
 	if resp.Body == nil {
 		return nil
 	}
-	if strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") {
+	if isProtocolUpgrade(resp) {
 		return nil
 	}
 

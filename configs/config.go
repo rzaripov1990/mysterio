@@ -26,6 +26,9 @@ type Config struct {
 	// set to e.g. "log" when the datasource Message field name is "log".
 	ElasticMessageField string
 
+	GraphQLEnabled bool
+	GraphQLURL     string
+
 	TestMeEnabled bool
 	BasePath      string
 
@@ -41,6 +44,14 @@ var hmacPlaceholder = regexp.MustCompile(`\{hmac(?::\$(\d+))?\}`)
 type Rules struct {
 	JSONKeys []JSONKeyRule `yaml:"json_keys"`
 	Regex    []RegexRule   `yaml:"regex"`
+	// GraphQL holds the rules applied to the /graphql route. They REPLACE the
+	// global json_keys/regex there rather than extending them, so the block
+	// must list every key that needs masking in GraphQL responses.
+	GraphQL GraphQLRules `yaml:"graphql"`
+}
+
+type GraphQLRules struct {
+	JSONKeys []JSONKeyRule `yaml:"json_keys"`
 }
 
 type JSONKeyRule struct {
@@ -97,6 +108,17 @@ func Load() (Config, error) {
 		cfg.ElasticMessageField = os.Getenv("ELASTIC_MESSAGE_FIELD")
 	}
 
+	cfg.GraphQLEnabled = getenvBool("GRAPHQL_ENABLED")
+	if cfg.GraphQLEnabled {
+		cfg.GraphQLURL = os.Getenv("GRAPHQL_URL")
+		if cfg.GraphQLURL == "" {
+			return Config{}, fmt.Errorf("GRAPHQL_ENABLED=true but GRAPHQL_URL is empty")
+		}
+		if _, err := url.Parse(cfg.GraphQLURL); err != nil {
+			return Config{}, fmt.Errorf("GRAPHQL_URL: %w", err)
+		}
+	}
+
 	cfg.TestMeEnabled = getenvBool("TEST_ME_ENABLED")
 
 	cfg.BasePath = os.Getenv("BASE_PATH")
@@ -109,8 +131,8 @@ func Load() (Config, error) {
 		}
 	}
 
-	if !cfg.LokiEnabled && !cfg.ElasticEnabled {
-		return Config{}, fmt.Errorf("at least one of LOKI_ENABLED or ELASTIC_ENABLED must be true")
+	if !cfg.LokiEnabled && !cfg.ElasticEnabled && !cfg.GraphQLEnabled {
+		return Config{}, fmt.Errorf("at least one of LOKI_ENABLED, ELASTIC_ENABLED or GRAPHQL_ENABLED must be true")
 	}
 
 	rulesPath := os.Getenv("RULES_PATH")
@@ -146,6 +168,11 @@ func RulesUseHMAC(r Rules) bool {
 	}
 	for _, x := range r.Regex {
 		if strings.Contains(x.Replace, "{hmac") {
+			return true
+		}
+	}
+	for _, k := range r.GraphQL.JSONKeys {
+		if strings.Contains(k.Replace, "{hmac") {
 			return true
 		}
 	}
@@ -263,6 +290,11 @@ func LoadRules(data []byte) (Rules, error) {
 	for _, k := range rules.JSONKeys {
 		if err := validateJSONKeyHMAC(k); err != nil {
 			return Rules{}, err
+		}
+	}
+	for _, k := range rules.GraphQL.JSONKeys {
+		if err := validateJSONKeyHMAC(k); err != nil {
+			return Rules{}, fmt.Errorf("graphql: %w", err)
 		}
 	}
 	return rules, nil

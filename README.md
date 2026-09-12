@@ -49,9 +49,9 @@ go build -o bin/mysterio .
 ./bin/mysterio
 ```
 
-At least one of `LOKI_ENABLED`/`ELASTIC_ENABLED` must be `true`, or the
-process exits at startup with an error — this includes the docker-compose
-stack below, whose defaults leave both `false`.
+At least one of `LOKI_ENABLED`/`ELASTIC_ENABLED`/`GRAPHQL_ENABLED` must be
+`true`, or the process exits at startup with an error — this includes the
+docker-compose stack below, whose defaults leave them all `false`.
 
 ## Env
 
@@ -62,8 +62,10 @@ stack below, whose defaults leave both `false`.
 | `ELASTIC_ENABLED` | `false` | Enable the `/elastic` proxy route |
 | `ELASTIC_URL` | — | Upstream Elasticsearch base URL; required if `ELASTIC_ENABLED=true` |
 | `ELASTIC_MESSAGE_FIELD` | `` (empty) | Grafana "Message field name". Empty = whole `_source` (Grafana default); set to `log` when the datasource uses Message field name `log` |
+| `GRAPHQL_ENABLED` | `false` | Enable the `/graphql` proxy route |
+| `GRAPHQL_URL` | — | Full upstream GraphQL endpoint URL, e.g. `https://api.example/api/graphql`; required if `GRAPHQL_ENABLED=true`. Its path is used verbatim — everything arriving under `/graphql` goes there |
 | `PORT` | `:8080` | Listen address |
-| `MAX_RESPONSE_BYTES` | `33554432` | Skip masking above this size (shared by both backends) |
+| `MAX_RESPONSE_BYTES` | `33554432` | Skip masking above this size (shared by all backends) |
 | `TEST_ME_ENABLED` | `false` | Enable the `/test-me` masking-preview UI |
 | `MASK_HMAC_KEY` | — | Raw HMAC key (min 32 bytes). Required if any rule uses `{hmac}` |
 | `BASE_PATH` | `` (root) | Public URL prefix for `/test-me` HTML/JS only (e.g. `/mysterio`). The process always listens on `/test-me`; the reverse proxy must strip the prefix, same as `/loki` / `/elastic` |
@@ -77,6 +79,14 @@ Loki and Elasticsearch: `json_keys` rules mask matching keys recursively in
 both; the `regex` rules apply to Loki log lines and to string fields inside
 Elasticsearch `_source` (e.g. Grafana's message field `log`).
 
+The `/graphql` route is the exception: it uses the separate `graphql:` block
+and **only** that block — the top-level `json_keys`/`regex` do not apply
+there. See [Rules](#rules).
+
+There is no token anywhere in the configuration. `/graphql` forwards the
+caller's own `Authorization`/`Cookie` headers to `GRAPHQL_URL` untouched;
+mysterio neither stores nor injects credentials.
+
 ## Routing
 
 - `/loki/*` → forwarded to `LOKI_URL` (mysterio mount prefix `/loki` is
@@ -85,6 +95,13 @@ Elasticsearch `_source` (e.g. Grafana's message field `log`).
   masking is applied only to `_search`/`_msearch` responses — other
   Elasticsearch endpoints (`_mapping`, `_field_caps`, index listings) pass
   through unmodified.
+- `/graphql` → forwarded to `GRAPHQL_URL`. The request path is replaced by
+  the path in `GRAPHQL_URL` (GraphQL is a single endpoint), method, body and
+  client headers pass through unchanged. **The response is always JSON:** a
+  body that does not parse as JSON (an ingress HTML error page, plain text,
+  an empty body) is replaced by a GraphQL error envelope, and `Content-Type`
+  is always `application/json; charset=utf-8`. Unlike the log routes, error
+  statuses are processed too; the upstream status code itself is preserved.
 - `/healthz` → `ok`
 
 ### Loki path prefixes (Grafana vs upstream)
@@ -204,6 +221,30 @@ Then set Grafana datasource to `http://host.docker.internal:9999/loki` (not `loc
 - **Elasticsearch `_search`/`_msearch`:** mask by key name in `_source`, and
   run the same Apply path (embedded JSON + regex) on string fields such as
   Grafana's message field (`log` / `message`).
+- **GraphQL (`/graphql`):** a separate top-level `graphql:` block with its
+  own `json_keys`. It **replaces** the global rules on that route rather
+  than extending them, so the block has to list every key it needs —
+  nothing is inherited. Keys are matched recursively across the whole
+  document (`data`, `errors`, `extensions`, nested objects and arrays).
+  There is no `regex` mechanism here; instead, a key whose value is an
+  object or array is replaced wholesale, so a GraphQL field like
+  `fullName { ru kz en }` is masked as a unit. `{hmac}` works the same as
+  elsewhere.
+
+```yaml
+graphql:
+  json_keys:
+    - name: iin
+      keys: [iin, IIN, biin]
+      replace: "{hmac}"
+      normalize: digits
+    - name: names
+      keys: [fullName, firstName, lastName]
+      replace: "***"
+```
+
+The `/test-me` UI previews the top-level `json_keys`/`regex` only; the
+`graphql:` block is parsed but not exercised there.
 
 Rules live in the file at `RULES_PATH` (`configs/rules.yaml` by default in
 this repo and in the Docker image); restart the process after editing — no

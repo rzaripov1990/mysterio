@@ -50,6 +50,7 @@ func main() {
 			"addr", cfg.ListenAddr,
 			"loki_enabled", cfg.LokiEnabled,
 			"elastic_enabled", cfg.ElasticEnabled,
+			"graphql_enabled", cfg.GraphQLEnabled,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server", "err", err)
