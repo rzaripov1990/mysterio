@@ -2,3 +2,5 @@ examples/
 .claude/
 docs/superpowers/
 *.sh
+*.json
+*.zip

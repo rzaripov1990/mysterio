@@ -336,6 +336,12 @@ graphql:
       replace: "************"
 `
 
+func graphqlPost(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
 func graphqlCfg(t *testing.T, upstreamURL string) config.Config {
 	t.Helper()
 	rules, err := config.LoadRules([]byte(graphqlRulesYAML))
@@ -371,6 +377,7 @@ func TestNewHandler_GraphQLRouting_UsesUpstreamPathAndForwardsToken(t *testing.T
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{ok}"}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer outside-token")
 	h.ServeHTTP(rec, req)
 
@@ -404,7 +411,7 @@ func TestNewHandler_GraphQLResponse_MaskedWithGraphQLBlockOnly(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{c}"}`)))
+	h.ServeHTTP(rec, graphqlPost(`{"query":"{c}"}`))
 
 	body := rec.Body.String()
 	if strings.Contains(body, "900101300123") {
@@ -449,7 +456,7 @@ graphql:
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{p}"}`)))
+	h.ServeHTTP(rec, graphqlPost(`{"query":"{p}"}`))
 
 	want := `{"data":{"Person":[{"FIRSTNAME":{"RU":"Р***","EN":null},"IIN":"9006******06","BALANCE":0}]}}`
 	if got := rec.Body.String(); got != want {
@@ -471,7 +478,7 @@ func TestNewHandler_GraphQLResponse_AlwaysJSONContentType(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{c}"}`)))
+	h.ServeHTTP(rec, graphqlPost(`{"query":"{c}"}`))
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Fatalf("expected application/json, got %q", ct)
@@ -516,7 +523,7 @@ func TestNewHandler_GraphQLUpstreamUnreachable_JSONEnvelope(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{c}"}`)))
+	h.ServeHTTP(rec, graphqlPost(`{"query":"{c}"}`))
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d", rec.Code)

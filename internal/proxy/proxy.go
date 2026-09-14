@@ -67,8 +67,9 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 		if err != nil {
 			return nil, fmt.Errorf("graphql upstream: %w", err)
 		}
-		mux.Handle("/graphql", rp)
-		mux.Handle("/graphql/", rp)
+		guarded := guardGraphQLRequest(rp)
+		mux.Handle("/graphql", guarded)
+		mux.Handle("/graphql/", guarded)
 		slog.Info("graphql masking rules",
 			"rules_path", cfg.RulesPath,
 			"keys", graphQLRuleKeys(cfg.Rules.GraphQL.JSONKeys),
@@ -232,7 +233,8 @@ func modifyElasticResponse(resp *http.Response, cfg config.Config, m *masker.Mas
 // a GraphQL error envelope), and Content-Type is forced to application/json.
 func modifyGraphQLResponse(resp *http.Response, cfg config.Config, mk GraphQLMaskers) error {
 	if isProtocolUpgrade(resp) {
-		// GraphQL subscriptions over websocket: proxy the handshake verbatim.
+		// guardGraphQLRequest refuses upgrade requests, so this should not
+		// happen; if it does, never rewrite a handshake.
 		return nil
 	}
 	status := resp.StatusCode

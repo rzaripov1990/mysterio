@@ -102,6 +102,28 @@ mysterio neither stores nor injects credentials.
   an empty body) is replaced by a GraphQL error envelope, and `Content-Type`
   is always `application/json; charset=utf-8`. Unlike the log routes, error
   statuses are processed too; the upstream status code itself is preserved.
+
+  **Requests are checked before they reach the upstream.** Masking rules
+  match response keys, and a GraphQL alias (`hackIIN: IIN`) would let a
+  caller rename them, so every query is parsed and **aliases are refused**
+  (an alias equal to the field name, `IIN: IIN`, is allowed). Anything that
+  cannot be checked is refused too. Refusals are a GraphQL error
+  `{"errors":[{"message":…,"extensions":{"code":…}}]}` and never reach the
+  upstream:
+
+  | Code | Status | When |
+  | --- | --- | --- |
+  | `ALIASES_NOT_ALLOWED` | 400 | any field alias, in any operation or fragment |
+  | `GRAPHQL_PARSE_FAILED` | 400 | the query is not valid GraphQL (or exceeds 15000 tokens) |
+  | `QUERY_REQUIRED` | 400 | no query text — e.g. a persisted query sent by hash only |
+  | `INVALID_REQUEST` | 400 | invalid JSON, trailing data, empty batch, or `query` given twice (duplicate or differently-cased key) |
+  | `UNSUPPORTED_REQUEST` | 400 / 405 | `Content-Type` other than `application/json` on POST (multipart, `application/graphql`), a body on GET, a method other than GET/HEAD/POST/OPTIONS |
+  | `REQUEST_TOO_LARGE` | 413 | request body over 1 MiB |
+  | `WEBSOCKET_NOT_ALLOWED` | 400 | any `Upgrade` request — subscriptions are not masked, so they are not proxied |
+
+  Supported: `POST application/json` with `{"query": …}`, a batch array of
+  such objects (each checked), and `GET ?query=`. `?query=` is checked on
+  every method and under any casing; `OPTIONS` (CORS preflight) passes.
 - `/healthz` → `ok`
 
 ### Loki path prefixes (Grafana vs upstream)
