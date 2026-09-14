@@ -512,11 +512,39 @@ func TestLoad_GraphQLEnabledInvalidURL_Error(t *testing.T) {
 	}
 }
 
+func TestLoad_GraphQLEnabledEmptyGraphQLBlock_Error(t *testing.T) {
+	clearBackendEnv(t)
+	t.Setenv("GRAPHQL_ENABLED", "true")
+	t.Setenv("GRAPHQL_URL", "http://api:4000/graphql")
+	// graphql nested under a regex item by indentation: yaml silently drops
+	// it, and /graphql would pass every response through unmasked.
+	t.Setenv("RULES_PATH", writeRulesFile(t, `
+regex:
+  - name: ipv4
+    pattern: 'x'
+    replace: "y"
+    graphql:
+      json_keys:
+        - name: iin
+          keys: [IIN]
+          replace: "***"
+`))
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error: GRAPHQL_ENABLED=true but rules have no graphql json_keys")
+	}
+}
+
 func TestLoad_GraphQLEnabledOnly_Success(t *testing.T) {
 	clearBackendEnv(t)
 	t.Setenv("GRAPHQL_ENABLED", "true")
 	t.Setenv("GRAPHQL_URL", "http://api:4000/graphql")
-	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML))
+	t.Setenv("RULES_PATH", writeRulesFile(t, validRulesYAML+`
+graphql:
+  json_keys:
+    - name: iin
+      keys: [IIN]
+      replace: "***"
+`))
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)

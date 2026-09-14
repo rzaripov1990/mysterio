@@ -73,6 +73,10 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 		}
 		mux.Handle("/graphql", rp)
 		mux.Handle("/graphql/", rp)
+		slog.Info("graphql masking rules",
+			"rules_path", cfg.RulesPath,
+			"keys", graphQLRuleKeys(cfg.Rules.GraphQL.JSONKeys),
+		)
 	}
 
 	if cfg.TestMeEnabled {
@@ -237,10 +241,16 @@ func modifyGraphQLResponse(resp *http.Response, cfg config.Config, mk GraphQLMas
 	}
 	status := resp.StatusCode
 	err := modifyResponseBody(resp, cfg, true, func(body []byte) ([]byte, error) {
-		out, _, err := MaskGraphQLResponseBody(body, mk, status)
+		out, changed, err := MaskGraphQLResponseBody(body, mk, status)
 		if err != nil {
 			return body, err
 		}
+		slog.Info("graphql response masking",
+			"status", status,
+			"changed", changed,
+			"bytes_in", len(body),
+			"bytes_out", len(out),
+		)
 		return out, nil
 	})
 	if err != nil {
@@ -248,6 +258,16 @@ func modifyGraphQLResponse(resp *http.Response, cfg config.Config, mk GraphQLMas
 	}
 	resp.Header.Set("Content-Type", "application/json; charset=utf-8")
 	return nil
+}
+
+// graphQLRuleKeys flattens the graphql block's key names for the startup log,
+// so the rules the process actually loaded are visible in the pod logs.
+func graphQLRuleKeys(rules []config.JSONKeyRule) []string {
+	var keys []string
+	for _, r := range rules {
+		keys = append(keys, r.Keys...)
+	}
+	return keys
 }
 
 // writeGraphQLGatewayError emits a GraphQL error envelope for a request that

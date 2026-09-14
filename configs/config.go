@@ -147,6 +147,12 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if cfg.GraphQLEnabled && len(rules.GraphQL.JSONKeys) == 0 {
+		// The graphql block replaces the global rules on /graphql, so an empty
+		// block (missing, or dropped by yaml because of wrong indentation)
+		// would proxy every GraphQL response unmasked.
+		return Config{}, fmt.Errorf("GRAPHQL_ENABLED=true but %q has no graphql.json_keys (check the block is top-level)", rulesPath)
+	}
 	cfg.RulesPath = rulesPath
 	cfg.RawRulesYAML = data
 	cfg.Rules = rules
