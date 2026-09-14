@@ -41,7 +41,7 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	})
 
 	if cfg.LokiEnabled {
-		rp, err := newReverseProxy(cfg.LokiURL, cfg, m, backendLoki, nil)
+		rp, err := newReverseProxy(cfg.LokiURL, cfg, m, backendLoki, GraphQLMaskers{})
 		if err != nil {
 			return nil, fmt.Errorf("loki upstream: %w", err)
 		}
@@ -49,7 +49,7 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	}
 
 	if cfg.ElasticEnabled {
-		rp, err := newReverseProxy(cfg.ElasticURL, cfg, m, backendElastic, nil)
+		rp, err := newReverseProxy(cfg.ElasticURL, cfg, m, backendElastic, GraphQLMaskers{})
 		if err != nil {
 			return nil, fmt.Errorf("elastic upstream: %w", err)
 		}
@@ -59,15 +59,11 @@ func NewHandler(cfg config.Config, m *masker.Masker) (http.Handler, error) {
 	if cfg.GraphQLEnabled {
 		// The /graphql route masks with the rules file's graphql block only —
 		// it REPLACES the global json_keys/regex rather than extending them.
-		gqlMasker, err := masker.NewWithOptions(
-			config.Rules{JSONKeys: cfg.Rules.GraphQL.JSONKeys},
-			processTokenizer(cfg),
-			masker.Options{MaskContainerValues: true},
-		)
+		gqlMasker, err := masker.NewGraphQL(cfg.Rules.GraphQL.JSONKeys, processTokenizer(cfg))
 		if err != nil {
 			return nil, fmt.Errorf("graphql masker: %w", err)
 		}
-		rp, err := newReverseProxy(cfg.GraphQLURL, cfg, gqlMasker, backendGraphQL, m)
+		rp, err := newReverseProxy(cfg.GraphQLURL, cfg, nil, backendGraphQL, GraphQLMaskers{Doc: gqlMasker, Text: m})
 		if err != nil {
 			return nil, fmt.Errorf("graphql upstream: %w", err)
 		}
@@ -99,9 +95,9 @@ func processTokenizer(cfg config.Config) *token.Tokenizer {
 	return token.New(cfg.MaskHMACKey)
 }
 
-// textMasker is only used by backendGraphQL, to mask the excerpt of a
-// non-JSON upstream body it puts in its error envelope; pass nil otherwise.
-func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, kind backendKind, textMasker *masker.Masker) (*httputil.ReverseProxy, error) {
+// m masks the log backends (Loki, Elastic); gql masks backendGraphQL. Each
+// kind uses only its own and ignores the other.
+func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, kind backendKind, gql GraphQLMaskers) (*httputil.ReverseProxy, error) {
 	upstream, err := url.Parse(rawUpstream)
 	if err != nil {
 		return nil, err
@@ -158,7 +154,7 @@ func newReverseProxy(rawUpstream string, cfg config.Config, m *masker.Masker, ki
 		case backendElastic:
 			return modifyElasticResponse(resp, cfg, m, path)
 		case backendGraphQL:
-			return modifyGraphQLResponse(resp, cfg, GraphQLMaskers{Doc: m, Text: textMasker})
+			return modifyGraphQLResponse(resp, cfg, gql)
 		default:
 			return modifyResponse(resp, cfg, m)
 		}

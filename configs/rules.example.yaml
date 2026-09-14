@@ -11,7 +11,9 @@ regex:
 
 # Rules for the /graphql route. They REPLACE the global json_keys/regex there
 # rather than extending them, so list every key that must be masked.
-# A key whose value is an object or array is replaced as a whole.
+# The document keeps its shape and key order; only string and number leaves
+# change. Keys are dot paths matched from the end: IIN, FIRSTNAME.RU,
+# FIRSTNAME.*, Person.IIN. A matched object or array masks every leaf inside.
 graphql:
   json_keys:
     - name: iin
@@ -19,5 +21,9 @@ graphql:
       replace: "{hmac}"
       normalize: digits
     - name: names
-      keys: [fullName, firstName, lastName]
+      keys: [fullName, FIRSTNAME.*, LASTNAME.RU]
+      keep_first: 1         # RAVIL -> R***
       replace: "***"
+    - name: balance
+      keys: [BALANCE]
+      replace_number: 0     # a number or null (the default)

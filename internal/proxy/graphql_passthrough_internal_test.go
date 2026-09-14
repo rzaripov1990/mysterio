@@ -16,7 +16,7 @@ import (
 // Such a response must leave completely untouched: rewriting its body or
 // Content-Type would corrupt the handshake.
 func TestModifyGraphQLResponse_WebsocketUpgrade_Untouched(t *testing.T) {
-	m, err := masker.New(config.Rules{}, nil)
+	m, err := masker.NewGraphQL(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

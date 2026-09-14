@@ -10,7 +10,7 @@ import (
 	"mysterio/internal/proxy"
 )
 
-func graphqlTestMasker(t *testing.T) *masker.Masker {
+func graphqlTestMasker(t *testing.T) *masker.GraphQL {
 	t.Helper()
 	rules, err := config.LoadRules([]byte(`
 graphql:
@@ -25,7 +25,7 @@ graphql:
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := masker.New(config.Rules{JSONKeys: rules.GraphQL.JSONKeys}, nil)
+	m, err := masker.NewGraphQL(rules.GraphQL.JSONKeys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestMaskGraphQLResponseBody_LongNonJSON_BodyExcerptTruncated(t *testing.T) 
 	}
 }
 
-func TestMaskGraphQLResponseBody_MasksObjectValuedKey(t *testing.T) {
+func TestMaskGraphQLResponseBody_ObjectValuedKey_LeavesMaskedInPlace(t *testing.T) {
 	rules, err := config.LoadRules([]byte(`
 graphql:
   json_keys:
@@ -187,7 +187,7 @@ graphql:
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := masker.NewWithOptions(config.Rules{JSONKeys: rules.GraphQL.JSONKeys}, nil, masker.Options{MaskContainerValues: true})
+	m, err := masker.NewGraphQL(rules.GraphQL.JSONKeys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,8 +203,9 @@ graphql:
 	if strings.Contains(string(out), "Иванов") {
 		t.Fatalf("object-valued key not masked: %s", out)
 	}
-	if !strings.Contains(string(out), `"fullName":"***"`) {
-		t.Fatalf("expected the whole object replaced, got: %s", out)
+	// The object keeps its shape: every leaf is masked, nothing is collapsed.
+	if !strings.Contains(string(out), `"fullName":{"ru":"***","kz":"***","en":"***"}`) {
+		t.Fatalf("expected each leaf masked in place, got: %s", out)
 	}
 }
 
@@ -219,7 +220,7 @@ graphql:
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := masker.NewWithOptions(config.Rules{JSONKeys: rules.GraphQL.JSONKeys}, nil, masker.Options{MaskContainerValues: true})
+	m, err := masker.NewGraphQL(rules.GraphQL.JSONKeys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

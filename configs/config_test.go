@@ -599,3 +599,116 @@ func TestLoadRules_RepoRulesYAML_HasGraphQLBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRules_GraphQLPartialMaskFields(t *testing.T) {
+	rules, err := config.LoadRules([]byte(`
+graphql:
+  json_keys:
+    - name: names
+      keys: [FIRSTNAME.RU, LASTNAME.*]
+      keep_first: 1
+      replace: "***"
+    - name: iin
+      keys: [IIN]
+      keep_first: 4
+      keep_last: 2
+      replace: "******"
+    - name: balance
+      keys: [BALANCE]
+      replace_number: -1.5
+    - name: amount
+      keys: [AMOUNT]
+      replace_number: null
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rules.GraphQL.JSONKeys
+	if got[0].KeepFirst != 1 || got[0].KeepLast != 0 {
+		t.Fatalf("names keep: %+v", got[0])
+	}
+	if got[1].KeepFirst != 4 || got[1].KeepLast != 2 {
+		t.Fatalf("iin keep: %+v", got[1])
+	}
+	if got[2].ReplaceNumber != "-1.5" {
+		t.Fatalf("balance replace_number: %q", got[2].ReplaceNumber)
+	}
+	if got[3].ReplaceNumber != "" {
+		t.Fatalf("null replace_number must be the zero value, got %q", got[3].ReplaceNumber)
+	}
+}
+
+func TestLoadRules_GraphQLInvalidRules_Error(t *testing.T) {
+	cases := map[string]string{
+		"negative keep_first": `
+graphql:
+  json_keys:
+    - name: x
+      keys: [a]
+      keep_first: -1
+      replace: "***"`,
+		"keep with hmac": `
+graphql:
+  json_keys:
+    - name: x
+      keys: [a]
+      keep_first: 1
+      replace: "{hmac}"`,
+		"replace_number string": `
+graphql:
+  json_keys:
+    - name: x
+      keys: [a]
+      replace_number: "***"`,
+		"replace_number not a JSON number": `
+graphql:
+  json_keys:
+    - name: x
+      keys: [a]
+      replace_number: .inf`,
+		"empty path segment": `
+graphql:
+  json_keys:
+    - name: x
+      keys: [FIRSTNAME..RU]
+      replace: "***"`,
+		"only wildcards": `
+graphql:
+  json_keys:
+    - name: x
+      keys: ["*.*"]
+      replace: "***"`,
+		"duplicate key across rules": `
+graphql:
+  json_keys:
+    - name: x
+      keys: [FIRSTNAME.RU]
+      replace: "***"
+    - name: y
+      keys: [FIRSTNAME.RU]
+      replace: "###"`,
+		"path in global json_keys": `
+json_keys:
+  - name: x
+    keys: [FIRSTNAME.RU]
+    replace: "***"`,
+		"keep_first in global json_keys": `
+json_keys:
+  - name: x
+    keys: [a]
+    keep_first: 1
+    replace: "***"`,
+		"replace_number in global json_keys": `
+json_keys:
+  - name: x
+    keys: [a]
+    replace_number: 0`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := config.LoadRules([]byte(content)); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}

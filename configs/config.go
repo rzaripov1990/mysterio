@@ -59,6 +59,60 @@ type JSONKeyRule struct {
 	Keys      []string `yaml:"keys"`
 	Replace   string   `yaml:"replace"`
 	Normalize string   `yaml:"normalize"`
+
+	// The fields below are graphql-block only (LoadRules rejects them in the
+	// global json_keys). KeepFirst/KeepLast leave that many leading/trailing
+	// characters (runes) of a string visible around Replace. ReplaceNumber is
+	// the JSON literal written in place of a numeric value; empty means null.
+	KeepFirst     int           `yaml:"keep_first"`
+	KeepLast      int           `yaml:"keep_last"`
+	ReplaceNumber NumberLiteral `yaml:"replace_number"`
+}
+
+// NumberLiteral is a JSON number literal taken verbatim from YAML, so the
+// masked document gets exactly what the rule says (0, -1, 0.00). The zero
+// value — replace_number omitted or null — stands for JSON null.
+type NumberLiteral string
+
+var jsonNumber = regexp.MustCompile(`^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$`)
+
+func (n *NumberLiteral) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.ShortTag() == "!!null" {
+		*n = ""
+		return nil
+	}
+	tag := node.ShortTag()
+	if node.Kind != yaml.ScalarNode || (tag != "!!int" && tag != "!!float") || !jsonNumber.MatchString(node.Value) {
+		return fmt.Errorf("line %d: replace_number must be a JSON number or null, got %q", node.Line, node.Value)
+	}
+	*n = NumberLiteral(node.Value)
+	return nil
+}
+
+// KeyPathSeparator splits a graphql json_keys entry into path segments
+// (FIRSTNAME.RU). GraphQL field names cannot contain a dot, so it is never
+// part of a key itself.
+const KeyPathSeparator = "."
+
+// KeyPathWildcard is a path segment matching any single key.
+const KeyPathWildcard = "*"
+
+// SplitKeyPath parses a graphql json_keys entry into its path segments.
+func SplitKeyPath(key string) ([]string, error) {
+	segs := strings.Split(key, KeyPathSeparator)
+	literal := false
+	for _, s := range segs {
+		if s == "" {
+			return nil, fmt.Errorf("key %q: empty path segment", key)
+		}
+		if s != KeyPathWildcard {
+			literal = true
+		}
+	}
+	if !literal {
+		return nil, fmt.Errorf("key %q: path must name at least one key, not only %q", key, KeyPathWildcard)
+	}
+	return segs, nil
 }
 
 type RegexRule struct {
@@ -297,13 +351,57 @@ func LoadRules(data []byte) (Rules, error) {
 		if err := validateJSONKeyHMAC(k); err != nil {
 			return Rules{}, err
 		}
+		if err := validateGlobalJSONKey(k); err != nil {
+			return Rules{}, err
+		}
 	}
+	seen := make(map[string]string)
 	for _, k := range rules.GraphQL.JSONKeys {
 		if err := validateJSONKeyHMAC(k); err != nil {
 			return Rules{}, fmt.Errorf("graphql: %w", err)
 		}
+		if err := validateGraphQLJSONKey(k, seen); err != nil {
+			return Rules{}, fmt.Errorf("graphql: %w", err)
+		}
 	}
 	return rules, nil
+}
+
+// validateGlobalJSONKey rejects graphql-only features in the log rules: they
+// are also applied as regexes over embedded JSON text, where neither paths
+// nor partial masks can be honoured — silently ignoring them would leak.
+func validateGlobalJSONKey(r JSONKeyRule) error {
+	if r.KeepFirst != 0 || r.KeepLast != 0 || r.ReplaceNumber != "" {
+		return fmt.Errorf("json_keys %q: keep_first, keep_last and replace_number are only supported in the graphql block", r.Name)
+	}
+	for _, k := range r.Keys {
+		if strings.Contains(k, KeyPathSeparator) {
+			return fmt.Errorf("json_keys %q: key paths like %q are only supported in the graphql block", r.Name, k)
+		}
+	}
+	return nil
+}
+
+// validateGraphQLJSONKey checks one graphql rule; seen maps every key path
+// already declared to its rule name, so a path claimed twice is an error
+// rather than an order-dependent override.
+func validateGraphQLJSONKey(r JSONKeyRule, seen map[string]string) error {
+	if r.KeepFirst < 0 || r.KeepLast < 0 {
+		return fmt.Errorf("json_keys %q: keep_first and keep_last must not be negative", r.Name)
+	}
+	if (r.KeepFirst > 0 || r.KeepLast > 0) && strings.Contains(r.Replace, "{hmac") {
+		return fmt.Errorf("json_keys %q: keep_first/keep_last cannot be combined with {hmac}", r.Name)
+	}
+	for _, k := range r.Keys {
+		if _, err := SplitKeyPath(k); err != nil {
+			return fmt.Errorf("json_keys %q: %w", r.Name, err)
+		}
+		if prev, dup := seen[k]; dup {
+			return fmt.Errorf("json_keys %q: key %q is already declared in rule %q", r.Name, k, prev)
+		}
+		seen[k] = r.Name
+	}
+	return nil
 }
 
 func getenv(k, def string) string {

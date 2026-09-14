@@ -415,6 +415,48 @@ func TestNewHandler_GraphQLResponse_MaskedWithGraphQLBlockOnly(t *testing.T) {
 	}
 }
 
+func TestNewHandler_GraphQLResponse_PartialMaskKeepsOrder(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json;charset=utf-8")
+		_, _ = w.Write([]byte(`{"data":{"Person":[{"FIRSTNAME":{"RU":"РАВИЛЬ","EN":null},"IIN":"900621300906","BALANCE":1500.25}]}}`))
+	}))
+	defer upstream.Close()
+
+	rules, err := config.LoadRules([]byte(`
+graphql:
+  json_keys:
+    - name: names
+      keys: [FIRSTNAME.*]
+      keep_first: 1
+      replace: "***"
+    - name: iin
+      keys: [Person.IIN]
+      keep_first: 4
+      keep_last: 2
+      replace: "******"
+    - name: balance
+      keys: [BALANCE]
+      replace_number: 0
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := graphqlCfg(t, upstream.URL+"/graphql")
+	cfg.Rules = rules
+	h, err := proxy.NewHandler(cfg, testMasker(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{p}"}`)))
+
+	want := `{"data":{"Person":[{"FIRSTNAME":{"RU":"Р***","EN":null},"IIN":"9006******06","BALANCE":0}]}}`
+	if got := rec.Body.String(); got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 func TestNewHandler_GraphQLResponse_AlwaysJSONContentType(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

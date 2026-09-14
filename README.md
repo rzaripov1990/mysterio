@@ -224,23 +224,45 @@ Then set Grafana datasource to `http://host.docker.internal:9999/loki` (not `loc
 - **GraphQL (`/graphql`):** a separate top-level `graphql:` block with its
   own `json_keys`. It **replaces** the global rules on that route rather
   than extending them, so the block has to list every key it needs —
-  nothing is inherited. Keys are matched recursively across the whole
-  document (`data`, `errors`, `extensions`, nested objects and arrays).
-  There is no `regex` mechanism here; instead, a key whose value is an
-  object or array is replaced wholesale, so a GraphQL field like
-  `fullName { ru kz en }` is masked as a unit. `{hmac}` works the same as
-  elsewhere.
+  nothing is inherited. Rules apply across the whole document (`data`,
+  `errors`, `extensions`, nested objects and arrays). **The document keeps
+  its shape and key order** — only string and number leaves change;
+  `null` and booleans are never touched.
+  - `keys` are dot paths matched against the end of a value's path; array
+    indices are not part of the path. `IIN` — that key at any depth;
+    `FIRSTNAME.RU` — only `RU` directly inside `FIRSTNAME`; `FIRSTNAME.*` —
+    every direct child of `FIRSTNAME`; `Person.IIN` — `IIN` only inside
+    `Person`. A matched object or array masks every leaf beneath it.
+  - When rules overlap, the most specific wins: the rule anchored closest
+    to the value, then more literal segments, then more segments. The same
+    path in two rules is a startup error.
+  - `keep_first` / `keep_last` keep that many leading/trailing characters
+    (runes) of a string around `replace`: `РАВИЛЬ` → `Р***`. A string too
+    short to hide anything becomes `replace` as a whole. Not combinable with
+    `{hmac}`.
+  - `replace_number` is written in place of a number: `0`, `-1`, `0.00` or
+    `null` (the default). A number never becomes a string, so typed GraphQL
+    clients keep working.
+  - Paths, `keep_*` and `replace_number` are graphql-only; using them in the
+    top-level `json_keys` is a startup error. `{hmac}` works as elsewhere.
+  - With `GRAPHQL_ENABLED=true` an empty `graphql.json_keys` is a startup
+    error; the loaded keys are logged at startup (`graphql masking rules`).
 
 ```yaml
 graphql:
   json_keys:
     - name: iin
-      keys: [iin, IIN, biin]
-      replace: "{hmac}"
-      normalize: digits
+      keys: [IIN]
+      keep_first: 4
+      keep_last: 2
+      replace: "******"      # 900621300906 -> 9006******06
     - name: names
-      keys: [fullName, firstName, lastName]
-      replace: "***"
+      keys: [FIRSTNAME.RU, LASTNAME.*]
+      keep_first: 1
+      replace: "***"         # РАВИЛЬ -> Р***
+    - name: balance
+      keys: [BALANCE]
+      replace_number: 0
 ```
 
 The `/test-me` UI previews the top-level `json_keys`/`regex` only; the

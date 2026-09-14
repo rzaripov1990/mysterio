@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"unicode/utf8"
@@ -18,7 +17,7 @@ const maxEnvelopeBodyBytes = 2048
 type GraphQLMaskers struct {
 	// Doc masks the GraphQL JSON document, built from the rules file's
 	// graphql block alone.
-	Doc *masker.Masker
+	Doc *masker.GraphQL
 	// Text masks the excerpt of a non-JSON upstream body embedded in the
 	// error envelope. That excerpt is free text (an ingress error page, a
 	// plain-text 503), not a GraphQL document, so it is run through the
@@ -29,9 +28,10 @@ type GraphQLMaskers struct {
 }
 
 // MaskGraphQLResponseBody masks a GraphQL response with the rules from the
-// rules file's graphql block. The whole document is walked by key name
+// rules file's graphql block. The whole document is walked by key path
 // (data, errors, extensions alike) — GraphQL has no fixed log-line shape, so
-// there is nothing narrower to target.
+// there is nothing narrower to target. The document keeps its shape and key
+// order; only string and number leaves change.
 //
 // The route contract is "always JSON": a body that does not parse as JSON
 // (an ingress HTML error page, plain text, an empty body) is replaced by a
@@ -40,30 +40,16 @@ type GraphQLMaskers struct {
 //
 // Returns (body, changed, err).
 func MaskGraphQLResponseBody(body []byte, mk GraphQLMaskers, upstreamStatus int) ([]byte, bool, error) {
-	m := mk.Doc
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
-	var root any
-	if err := dec.Decode(&root); err != nil {
-		return graphQLErrorEnvelope(body, mk, upstreamStatus)
-	}
-	if _, ok := root.(map[string]any); !ok {
-		// A bare scalar or array is not a GraphQL response document.
-		return graphQLErrorEnvelope(body, mk, upstreamStatus)
-	}
-
-	if !m.WalkAndMask(root) {
-		return body, false, nil
-	}
-	out, err := json.Marshal(root)
+	out, changed, err := mk.Doc.MaskDocument(body)
 	if err != nil {
-		return body, false, err
+		// Not JSON, or a bare scalar/array — not a GraphQL response document.
+		return graphQLErrorEnvelope(body, mk, upstreamStatus)
 	}
-	return out, true, nil
+	return out, changed, nil
 }
 
 func graphQLErrorEnvelope(body []byte, mk GraphQLMaskers, upstreamStatus int) ([]byte, bool, error) {
-	excerpt := mk.Doc.Apply(string(body))
+	excerpt := mk.Doc.ApplyText(string(body))
 	if mk.Text != nil {
 		excerpt = mk.Text.Apply(excerpt)
 	}
